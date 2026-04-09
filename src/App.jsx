@@ -110,6 +110,11 @@ const UPGRADE_MAX_LEVELS = Object.fromEntries(upgradeCatalog.map((upgrade) => [u
 const SAVE_STORAGE_KEY = 'peg-progress-v1'
 const LEADERBOARD_USERNAME_KEY = 'peg-leaderboard-username-v1'
 const LEADERBOARD_LIMIT = 50
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
+
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`
+}
 
 function lerpColor(from, to, amount) {
   const t = Math.min(1, Math.max(0, amount))
@@ -436,7 +441,7 @@ function App() {
     setLeaderboardLoading(true)
     setLeaderboardError('')
     try {
-      const response = await fetch(`/api/leaderboard?limit=${LEADERBOARD_LIMIT}`)
+      const response = await fetch(apiUrl(`/api/leaderboard?limit=${LEADERBOARD_LIMIT}`))
       if (!response.ok) {
         throw new Error('Could not load leaderboard.')
       }
@@ -450,7 +455,7 @@ function App() {
         return entries.find((entry) => entry.username === previous.username) ?? entries[0] ?? null
       })
     } catch {
-      setLeaderboardError('Leaderboard server unavailable. Start npm run server.')
+      setLeaderboardError('Leaderboard unavailable. Set VITE_API_BASE_URL to your deployed backend URL.')
     } finally {
       setLeaderboardLoading(false)
     }
@@ -477,7 +482,7 @@ function App() {
     setLeaderboardSubmitStatus('')
 
     try {
-      const response = await fetch('/api/leaderboard/submit', {
+      const response = await fetch(apiUrl('/api/leaderboard/submit'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -504,7 +509,7 @@ function App() {
       setLeaderboardSubmitStatus(`Submitted! Current rank: #${data.rank}`)
       await refreshLeaderboard()
     } catch {
-      setLeaderboardSubmitStatus('Submission failed. Is the server running?')
+      setLeaderboardSubmitStatus('Submission failed. Check backend URL and CORS settings.')
     } finally {
       setLeaderboardSubmitting(false)
     }

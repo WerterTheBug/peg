@@ -37,6 +37,14 @@ npm install
 npm run dev
 ```
 
+Optional env var for custom API target (frontend):
+
+```env
+VITE_API_BASE_URL=""
+```
+
+Leave it empty for local Vite proxy behavior.
+
 ### Run Leaderboard Server
 
 ```bash
@@ -46,6 +54,18 @@ npm run server
 Run `npm run dev` and `npm run server` in separate terminals during development.
 
 The frontend calls `/api/*` and is proxied to `http://localhost:3001` in development.
+
+### Netlify / Static Hosting Notes
+
+Netlify hosts this frontend as static files only. The leaderboard API must be deployed separately (for example Render, Railway, Fly.io, or your own server).
+
+Set a Netlify environment variable so the frontend points to your deployed backend:
+
+- `VITE_API_BASE_URL=https://your-backend-domain.com`
+
+Then redeploy the site.
+
+Also allow your Netlify site origin in backend CORS settings.
 
 ### Global Persistent Mode (MongoDB Atlas)
 
