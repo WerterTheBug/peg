@@ -61,7 +61,12 @@
   background: #0e0e0e;
   color: #aac8ff;
   font: 400 1.4rem/1 'VT323', monospace;
-  padding: 6px 8px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   white-space: nowrap;
   transition: background 80ms, color 80ms;
@@ -280,20 +285,25 @@
   right: 0;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(9, 1fr);
-  gap: 4px;
-  padding: 8px;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
   pointer-events: none;
 }
 
 .slot-card {
   border: 1px solid #00ff4144;
+  border-right: 0;
   background: rgba(0, 0, 0, 0.9);
   color: #00ff41;
   text-align: center;
   padding: 4px 2px;
   display: grid;
   gap: 2px;
+}
+
+.slot-card:last-child {
+  border-right: 1px solid #00ff4144;
 }
 
 .slot-name {

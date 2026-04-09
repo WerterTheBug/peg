@@ -85,7 +85,7 @@ function createAudioEngine() {
   }
 
   return {
-    peg: () => tone({ frequency: 410 + Math.random() * 80, type: 'triangle', duration: 0.07, gain: 0.16 }),
+    peg: () => tone({ frequency: 410 + Math.random() * 80, type: 'triangle', duration: 0.07, gain: 0.48 }),
     slot: (slotIndex) => {
       const root = 220 + slotIndex * 15
       tone({ frequency: root, type: 'sine', duration: 0.18, gain: 0.08 })
