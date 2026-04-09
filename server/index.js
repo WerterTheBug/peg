@@ -253,6 +253,10 @@ let storage
 app.use(cors())
 app.use(express.json({ limit: '500kb' }))
 
+app.get('/', (_req, res) => {
+  res.json({ name: 'Plinko Leaderboard API', status: 'ok', endpoints: ['/api/health', '/api/leaderboard'] })
+})
+
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
