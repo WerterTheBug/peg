@@ -16,16 +16,16 @@ const upgradeCatalog = [
   },
   {
     id: 'gravityLevel',
-    title: 'Gravity Drive',
-    description: 'Increase board gravity and game pace.',
+    title: 'Centrifuge',
+    description: 'Increase board gravity so balls drop faster.',
     baseCost: 35,
     growth: 1.65,
     maxLevel: 8,
   },
   {
     id: 'pegLevel',
-    title: 'Peg Engine',
-    description: 'Peg hits that pay out give dramatically more coins.',
+    title: 'Golden Pegs',
+    description: 'Each level increases peg payout by 50%.',
     baseCost: 40,
     growth: 1.75,
     maxLevel: 12,
@@ -33,14 +33,14 @@ const upgradeCatalog = [
   {
     id: 'rainbowLevel',
     title: 'Prism Core',
-    description: 'Each level: +8% peg coin chance and unlocks rainbow coin text.',
+    description: 'Each level: +10% peg coin chance and unlocks neon gold coin text.',
     baseCost: 44,
     growth: 1.75,
     maxLevel: 8,
   },
   {
     id: 'slotGlobalLevel',
-    title: 'Slot Forge',
+    title: 'Slot Machine (ifykyk)',
     description: 'Multiply every slot payout.',
     baseCost: 55,
     growth: 1.8,
@@ -55,6 +55,134 @@ const upgradeCatalog = [
     maxLevel: 5,
   },
 ]
+
+const UPGRADE_DEFAULTS = {
+  ballsPerDrop: 1,
+  gravityLevel: 1,
+  pegLevel: 1,
+  rainbowLevel: 0,
+  slotGlobalLevel: 1,
+  frenzyLevel: 0,
+}
+
+const UPGRADE_MIN_LEVELS = {
+  ballsPerDrop: 1,
+  gravityLevel: 1,
+  pegLevel: 1,
+  rainbowLevel: 0,
+  slotGlobalLevel: 1,
+  frenzyLevel: 0,
+}
+
+const UPGRADE_MAX_LEVELS = Object.fromEntries(upgradeCatalog.map((upgrade) => [upgrade.id, upgrade.maxLevel]))
+const SAVE_STORAGE_KEY = 'peg-progress-v1'
+
+function lerpColor(from, to, amount) {
+  const t = Math.min(1, Math.max(0, amount))
+  const fromValue = Number.parseInt(from.slice(1), 16)
+  const toValue = Number.parseInt(to.slice(1), 16)
+
+  const fr = (fromValue >> 16) & 255
+  const fg = (fromValue >> 8) & 255
+  const fb = fromValue & 255
+
+  const tr = (toValue >> 16) & 255
+  const tg = (toValue >> 8) & 255
+  const tb = toValue & 255
+
+  const r = Math.round(fr + (tr - fr) * t)
+  const g = Math.round(fg + (tg - fg) * t)
+  const b = Math.round(fb + (tb - fb) * t)
+
+  return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
+}
+
+function getPegRenderStyle(pegLevel) {
+  const blend = Math.min(1, Math.max(0, (pegLevel - 1) / 8))
+  return {
+    fillStyle: lerpColor('#0e2c32', '#7f5b10', blend),
+    strokeStyle: lerpColor('#84f5d9', '#ffd86e', blend),
+    lineWidth: 1.2 + blend * 0.7,
+  }
+}
+
+function countLiveBalls(world) {
+  return world.bodies.reduce((count, body) => count + (body.label === 'ball' ? 1 : 0), 0)
+}
+
+function clampNumber(value, min, max, fallback) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) {
+    return fallback
+  }
+  return Math.min(max, Math.max(min, numeric))
+}
+
+function normalizeArray(raw, length, min, max, fallback) {
+  if (!Array.isArray(raw)) {
+    return Array.from({ length }, () => fallback)
+  }
+  return Array.from({ length }, (_, index) => {
+    const value = raw[index]
+    return clampNumber(value, min, max, fallback)
+  })
+}
+
+function normalizeUpgrades(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const next = { ...UPGRADE_DEFAULTS }
+  for (const key of Object.keys(UPGRADE_DEFAULTS)) {
+    next[key] = clampNumber(
+      source[key],
+      UPGRADE_MIN_LEVELS[key],
+      UPGRADE_MAX_LEVELS[key] ?? UPGRADE_DEFAULTS[key],
+      UPGRADE_DEFAULTS[key],
+    )
+  }
+  return next
+}
+
+function defaultProgress() {
+  return {
+    coins: 40,
+    totalCoins: 0,
+    totalBalls: 3,
+    frenzyUntil: 0,
+    upgrades: { ...UPGRADE_DEFAULTS },
+    slotLevels: Array.from({ length: SLOT_COUNT }, () => 1),
+    slotFill: Array.from({ length: SLOT_COUNT }, () => 0),
+    soundOn: true,
+    volume: 0.18,
+  }
+}
+
+function loadProgress() {
+  const fallback = defaultProgress()
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+
+  try {
+    const stored = window.localStorage.getItem(SAVE_STORAGE_KEY)
+    if (!stored) {
+      return fallback
+    }
+    const parsed = JSON.parse(stored)
+    return {
+      coins: clampNumber(parsed?.coins, 0, Number.MAX_SAFE_INTEGER, fallback.coins),
+      totalCoins: clampNumber(parsed?.totalCoins, 0, Number.MAX_SAFE_INTEGER, fallback.totalCoins),
+      totalBalls: clampNumber(parsed?.totalBalls, 1, 9999, fallback.totalBalls),
+      frenzyUntil: clampNumber(parsed?.frenzyUntil, 0, Number.MAX_SAFE_INTEGER, fallback.frenzyUntil),
+      upgrades: normalizeUpgrades(parsed?.upgrades),
+      slotLevels: normalizeArray(parsed?.slotLevels, SLOT_COUNT, 1, 9999, 1),
+      slotFill: normalizeArray(parsed?.slotFill, SLOT_COUNT, 0, 999999, 0),
+      soundOn: typeof parsed?.soundOn === 'boolean' ? parsed.soundOn : fallback.soundOn,
+      volume: clampNumber(parsed?.volume, 0, 1, fallback.volume),
+    }
+  } catch {
+    return fallback
+  }
+}
 
 function createAudioEngine() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext
@@ -117,36 +245,54 @@ function App() {
   const runnerRef = useRef(null)
   const audioRef = useRef(null)
   const spawnIntervalRef = useRef(null)
+  const holdDropIntervalRef = useRef(null)
 
-  const [coins, setCoins] = useState(40)
-  const [totalCoins, setTotalCoins] = useState(0)
-  const [totalBalls, setTotalBalls] = useState(3)
+  const initialProgress = useMemo(() => loadProgress(), [])
+
+  const [coins, setCoins] = useState(initialProgress.coins)
+  const [totalCoins, setTotalCoins] = useState(initialProgress.totalCoins)
+  const [totalBalls, setTotalBalls] = useState(initialProgress.totalBalls)
   const [activeBalls, setActiveBalls] = useState(0)
   const [flashCoins, setFlashCoins] = useState(false)
   const [boardShake, setBoardShake] = useState(false)
-  const [frenzyUntil, setFrenzyUntil] = useState(0)
+  const [frenzyUntil, setFrenzyUntil] = useState(initialProgress.frenzyUntil)
   const [floaters, setFloaters] = useState([])
   const [showSettings, setShowSettings] = useState(false)
-  const [soundOn, setSoundOn] = useState(true)
-  const [volume, setVolume] = useState(0.18)
+  const [soundOn, setSoundOn] = useState(initialProgress.soundOn)
+  const [volume, setVolume] = useState(initialProgress.volume)
 
-  const [upgrades, setUpgrades] = useState({
-    ballsPerDrop: 1,
-    gravityLevel: 1,
-    pegLevel: 1,
-    rainbowLevel: 0,
-    slotGlobalLevel: 1,
-    frenzyLevel: 0,
-  })
+  const [upgrades, setUpgrades] = useState(initialProgress.upgrades)
 
-  const [slotLevels, setSlotLevels] = useState(() => Array.from({ length: SLOT_COUNT }, () => 1))
-  const [slotFill, setSlotFill] = useState(() => Array.from({ length: SLOT_COUNT }, () => 0))
+  const [slotLevels, setSlotLevels] = useState(initialProgress.slotLevels)
+  const [slotFill, setSlotFill] = useState(initialProgress.slotFill)
 
   const stateRef = useRef({ upgrades, slotLevels, slotFill, totalBalls, activeBalls: 0 })
 
   useEffect(() => {
     stateRef.current = { ...stateRef.current, upgrades, slotLevels, slotFill, totalBalls }
   }, [upgrades, slotLevels, slotFill, totalBalls])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    const payload = {
+      coins,
+      totalCoins,
+      totalBalls,
+      frenzyUntil,
+      upgrades,
+      slotLevels,
+      slotFill,
+      soundOn,
+      volume,
+    }
+    try {
+      window.localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(payload))
+    } catch {
+      // Ignore storage write errors and continue gameplay.
+    }
+  }, [coins, totalCoins, totalBalls, frenzyUntil, upgrades, slotLevels, slotFill, soundOn, volume])
 
   const addFloater = useCallback((x, y, text, kind = 'coin') => {
     const id = window.crypto.randomUUID()
@@ -178,7 +324,13 @@ function App() {
     if (!engine) {
       return
     }
-    if (stateRef.current.activeBalls >= stateRef.current.totalBalls) {
+
+    const liveCount = countLiveBalls(engine.world)
+    if (liveCount >= stateRef.current.totalBalls) {
+      if (stateRef.current.activeBalls !== liveCount) {
+        stateRef.current.activeBalls = liveCount
+        setActiveBalls((previous) => (previous === liveCount ? previous : liveCount))
+      }
       return
     }
 
@@ -198,12 +350,14 @@ function App() {
       },
       plugin: {
         intensity,
+        createdAt: Date.now(),
       },
     })
 
     Matter.World.add(engine.world, ball)
-    stateRef.current.activeBalls = (stateRef.current.activeBalls ?? 0) + 1
-    setActiveBalls((value) => value + 1)
+    const nextCount = countLiveBalls(engine.world)
+    stateRef.current.activeBalls = nextCount
+    setActiveBalls((previous) => (previous === nextCount ? previous : nextCount))
   }, [frenzyActive])
 
   const dropBallWave = useCallback(() => {
@@ -217,6 +371,50 @@ function App() {
     }
   }, [frenzyActive, spawnBall, activeBalls, totalBalls])
 
+  const stopHoldDrop = useCallback(() => {
+    if (holdDropIntervalRef.current) {
+      window.clearInterval(holdDropIntervalRef.current)
+      holdDropIntervalRef.current = null
+    }
+  }, [])
+
+  const startHoldDrop = useCallback(() => {
+    if (stateRef.current.activeBalls >= stateRef.current.totalBalls) {
+      return
+    }
+    dropBallWave()
+    if (holdDropIntervalRef.current) {
+      return
+    }
+    holdDropIntervalRef.current = window.setInterval(() => {
+      if (stateRef.current.activeBalls >= stateRef.current.totalBalls) {
+        return
+      }
+      dropBallWave()
+    }, 150)
+  }, [dropBallWave])
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key.toLowerCase() !== 'q') {
+        return
+      }
+      const target = event.target
+      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      event.preventDefault()
+      dropBallWave()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [dropBallWave])
+
+  useEffect(() => () => stopHoldDrop(), [stopHoldDrop])
+
   useEffect(() => {
     if (!boardWrapRef.current || !canvasRef.current) {
       return undefined
@@ -227,6 +425,7 @@ function App() {
 
     const width = Math.min(800, Math.max(500, boardWrapRef.current.clientWidth))
     const height = 700
+    const slotAreaTop = height - 168
 
     const engine = Matter.Engine.create()
     engine.gravity.y = 0.86
@@ -249,20 +448,23 @@ function App() {
     const pegRows = 10
     const pegSpacingX = width / (SLOT_COUNT + 1)
     const pegSpacingY = 52
+    const pegRadius = 7
+    const pegRenderStyle = getPegRenderStyle(stateRef.current.upgrades.pegLevel)
     const pegs = []
 
     for (let row = 0; row < pegRows; row += 1) {
       const count = row % 2 === 0 ? SLOT_COUNT : SLOT_COUNT - 1
       const offset = row % 2 === 0 ? 0 : pegSpacingX / 2
       for (let col = 0; col < count; col += 1) {
-        const peg = Matter.Bodies.polygon(pegSpacingX + col * pegSpacingX + offset, 120 + row * pegSpacingY, 6, 7, {
+        const pegX = pegSpacingX + col * pegSpacingX + offset
+        const pegY = 120 + row * pegSpacingY
+        if (pegY + pegRadius >= slotAreaTop) {
+          continue
+        }
+        const peg = Matter.Bodies.polygon(pegX, pegY, 6, pegRadius, {
           isStatic: true,
           label: 'peg',
-          render: {
-            fillStyle: '#0e2c32',
-            strokeStyle: '#84f5d9',
-            lineWidth: 1.2,
-          },
+          render: pegRenderStyle,
         })
         pegs.push(peg)
       }
@@ -276,7 +478,6 @@ function App() {
       Matter.Bodies.rectangle(width / 2, -15, width + 30, 30, { isStatic: true, render: { visible: false } }),
     ]
 
-    const slotAreaTop = height - 168
     const slotHeight = 160
     const slotWidth = width / SLOT_COUNT
     const separators = []
@@ -321,11 +522,12 @@ function App() {
         if (pegHit) {
           audioRef.current?.peg()
           const { pegLevel, rainbowLevel, frenzyLevel } = stateRef.current.upgrades
-          const pegChance = Math.min(0.9, 1 / 3 + rainbowLevel * 0.08)
+          const pegChance = Math.min(0.9, 1 / 3 + rainbowLevel * 0.1)
           if (Math.random() < pegChance) {
             const crit = Math.random() < 0.1
             const frenzyBoost = frenzyActive ? 1 + frenzyLevel * 0.55 : 1
-            const amount = Math.max(1, Math.round((0.8 + pegLevel * 0.7) * (crit ? 5 : 1) * frenzyBoost))
+            const pegPayoutMultiplier = 1 + Math.max(0, pegLevel - 1) * 0.5
+            const amount = Math.max(1, Math.round(pegPayoutMultiplier * (crit ? 5 : 1) * frenzyBoost))
             registerCoins(amount)
             const x = (ballBody.position.x / width) * 100
             const y = (ballBody.position.y / height) * 100
@@ -367,8 +569,9 @@ function App() {
           })
 
           Matter.World.remove(engine.world, ballBody)
-          stateRef.current.activeBalls = Math.max(0, (stateRef.current.activeBalls ?? 1) - 1)
-          setActiveBalls((value) => Math.max(0, value - 1))
+          const liveCount = countLiveBalls(engine.world)
+          stateRef.current.activeBalls = liveCount
+          setActiveBalls((previous) => (previous === liveCount ? previous : liveCount))
           setBoardShake(true)
           window.setTimeout(() => setBoardShake(false), 160)
         }
@@ -381,6 +584,32 @@ function App() {
     Matter.Runner.run(runner, engine)
     Matter.Render.run(render)
 
+    const staleBallTtlMs = 30000
+    const cleanupInterval = window.setInterval(() => {
+      const now = Date.now()
+      for (const body of [...engine.world.bodies]) {
+        if (body.label !== 'ball') {
+          continue
+        }
+
+        const age = now - (body.plugin?.createdAt ?? now)
+        const outOfBounds =
+          body.position.y > height + 120 ||
+          body.position.x < -120 ||
+          body.position.x > width + 120
+
+        if (outOfBounds || age > staleBallTtlMs) {
+          Matter.World.remove(engine.world, body)
+        }
+      }
+
+      const liveCount = countLiveBalls(engine.world)
+      if (stateRef.current.activeBalls !== liveCount) {
+        stateRef.current.activeBalls = liveCount
+        setActiveBalls((previous) => (previous === liveCount ? previous : liveCount))
+      }
+    }, 400)
+
     const resize = () => {
       const newWidth = Math.min(800, Math.max(500, boardWrapRef.current?.clientWidth ?? 700))
       render.canvas.width = newWidth
@@ -392,13 +621,15 @@ function App() {
       if (spawnIntervalRef.current) {
         window.clearInterval(spawnIntervalRef.current)
       }
+      window.clearInterval(cleanupInterval)
+      stopHoldDrop()
       window.removeEventListener('resize', resize)
       Matter.Render.stop(render)
       Matter.Runner.stop(runner)
       Matter.World.clear(engine.world, false)
       Matter.Engine.clear(engine)
     }
-  }, [addFloater, frenzyActive, registerCoins])
+  }, [addFloater, frenzyActive, registerCoins, stopHoldDrop])
 
   useEffect(() => {
     if (!engineRef.current) {
@@ -406,6 +637,22 @@ function App() {
     }
     engineRef.current.gravity.y = 0.78 + upgrades.gravityLevel * 0.18
   }, [upgrades.gravityLevel])
+
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) {
+      return
+    }
+    const nextStyle = getPegRenderStyle(upgrades.pegLevel)
+    for (const body of engine.world.bodies) {
+      if (body.label !== 'peg') {
+        continue
+      }
+      body.render.fillStyle = nextStyle.fillStyle
+      body.render.strokeStyle = nextStyle.strokeStyle
+      body.render.lineWidth = nextStyle.lineWidth
+    }
+  }, [upgrades.pegLevel])
 
   useEffect(() => {
     if (!frenzyActive || upgrades.frenzyLevel < 1) {
@@ -554,8 +801,15 @@ function App() {
         )}
 
         <div className="actions-row">
-          <button className="drop-button" onClick={dropBallWave} disabled={activeBalls >= totalBalls}>
-            Drop {Math.min(upgrades.ballsPerDrop + (frenzyActive ? 1 : 0), totalBalls - activeBalls)} Ball{Math.min(upgrades.ballsPerDrop + (frenzyActive ? 1 : 0), totalBalls - activeBalls) !== 1 ? 's' : ''}
+          <button
+            className="drop-button"
+            onPointerDown={startHoldDrop}
+            onPointerUp={stopHoldDrop}
+            onPointerLeave={stopHoldDrop}
+            onPointerCancel={stopHoldDrop}
+            disabled={activeBalls >= totalBalls}
+          >
+            Drop {Math.min(upgrades.ballsPerDrop + (frenzyActive ? 1 : 0), totalBalls - activeBalls)} Ball{Math.min(upgrades.ballsPerDrop + (frenzyActive ? 1 : 0), totalBalls - activeBalls) !== 1 ? 's' : '' } (Q)
           </button>
           <div className="stats-chip">Balls: {activeBalls} / {totalBalls}</div>
           <div className="stats-chip">Total Minted: {Math.floor(totalCoins).toLocaleString()}</div>
@@ -615,7 +869,7 @@ function App() {
             const cost = getUpgradeCost(upgrade.id, level + 1)
             const isMaxed = level >= upgrade.maxLevel
             return (
-              <article key={upgrade.id} className={`upgrade-card ${upgrade.id === 'frenzyLevel' ? 'rare' : ''}`}>
+              <article key={upgrade.id} className={`upgrade-card ${upgrade.id === 'frenzyLevel' ? 'rare' : ''} ${isMaxed ? 'maxed' : ''}`}>
                 <div>
                   <h3>{upgrade.title}</h3>
                   <p>{upgrade.description}</p>

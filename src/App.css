@@ -346,21 +346,28 @@
 }
 
 .floater.peg {
-  background: linear-gradient(90deg, #ff3cac, #ff8c00, #ffe600, #39ff14, #00d4ff, #a855f7, #ff3cac);
+  background: linear-gradient(90deg, #fff3b0, #ffe27a, #ffca3a, #ffd86e, #fff3b0);
   background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  -webkit-text-stroke: 0.9px #fff8dd;
+  text-shadow: 0 0 6px #ffd86ebb, 0 0 12px #ffca3a77;
+  font-size: 1.45rem;
+  font-weight: 700;
   animation: riseFade 850ms ease-out forwards, rainbowShift 0.7s linear infinite;
 }
 
 .floater.pegCrit {
-  background: linear-gradient(90deg, #fff, #ffe600, #ff3cac, #a855f7, #00d4ff, #39ff14, #fff);
+  background: linear-gradient(90deg, #fffbe0, #ffe994, #ffd24f, #ffe27a, #fffbe0);
   background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  font-size: 1.1rem;
+  -webkit-text-stroke: 1.05px #fffdf2;
+  text-shadow: 0 0 8px #ffe27acc, 0 0 16px #ffca3a99;
+  font-size: 1.7rem;
+  font-weight: 800;
   animation: riseFade 850ms ease-out forwards, rainbowShift 0.35s linear infinite;
 }
 
@@ -413,6 +420,32 @@
 .upgrade-card.rare {
   border-color: #ffb700;
   background: #111100;
+}
+
+.upgrade-card.maxed {
+  border-color: #9dff00;
+  background: linear-gradient(120deg, #111111, #193013, #0f3f30, #111111);
+  background-size: 260% 260%;
+  box-shadow: 0 0 0 1px #9dff0050, 0 0 16px #41ff7a55;
+  animation: maxedNeonFlow 2.4s linear infinite;
+}
+
+.upgrade-card.maxed h3 {
+  color: #e9ffd2;
+  text-shadow: 0 0 7px #8dff9d88;
+}
+
+.upgrade-card.maxed p,
+.upgrade-card.maxed .upgrade-meta span {
+  color: #bde8bf;
+}
+
+.upgrade-card.maxed .upgrade-meta button:disabled {
+  opacity: 1;
+  border-color: #9dff00;
+  color: #9dff00;
+  background: #0d150b;
+  box-shadow: inset 0 0 10px #9dff0038;
 }
 
 .upgrade-card h3 {
@@ -498,6 +531,15 @@
   to {
     opacity: 0;
     transform: translateY(-28px) scale(1.08);
+  }
+}
+
+@keyframes maxedNeonFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 220% 50%;
   }
 }
 
