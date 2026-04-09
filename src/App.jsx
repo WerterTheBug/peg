@@ -4,6 +4,11 @@ import './App.css'
 
 const SLOT_COUNT = 9
 const SLOT_BASE_REWARDS = [20, 12, 8, 5, 3, 5, 8, 12, 20]
+const BOARD_MAX_WIDTH = 800
+const BOARD_MIN_WIDTH = 460
+const BOARD_MAX_HEIGHT = 700
+const BOARD_MIN_HEIGHT = 430
+const GITHUB_URL = 'https://github.com/btfcookies/peg'
 
 const upgradeCatalog = [
   {
@@ -225,8 +230,9 @@ function App() {
     audioRef.current = createAudioEngine()
     audioRef.current?.setVolume(soundOn ? volume : 0)
 
-    const width = Math.min(800, Math.max(500, boardWrapRef.current.clientWidth))
-    const height = 700
+    const width = Math.min(BOARD_MAX_WIDTH, Math.max(BOARD_MIN_WIDTH, boardWrapRef.current.clientWidth))
+    const measuredHeight = boardWrapRef.current.clientHeight || BOARD_MAX_HEIGHT
+    const height = Math.min(BOARD_MAX_HEIGHT, Math.max(BOARD_MIN_HEIGHT, measuredHeight))
 
     const engine = Matter.Engine.create()
     engine.gravity.y = 0.86
@@ -382,9 +388,13 @@ function App() {
     Matter.Render.run(render)
 
     const resize = () => {
-      const newWidth = Math.min(800, Math.max(500, boardWrapRef.current?.clientWidth ?? 700))
+      const newWidth = Math.min(BOARD_MAX_WIDTH, Math.max(BOARD_MIN_WIDTH, boardWrapRef.current?.clientWidth ?? BOARD_MAX_WIDTH))
+      const measuredHeight = boardWrapRef.current?.clientHeight ?? BOARD_MAX_HEIGHT
+      const newHeight = Math.min(BOARD_MAX_HEIGHT, Math.max(BOARD_MIN_HEIGHT, measuredHeight))
       render.canvas.width = newWidth
       render.options.width = newWidth
+      render.canvas.height = newHeight
+      render.options.height = newHeight
     }
     window.addEventListener('resize', resize)
 
@@ -500,6 +510,9 @@ function App() {
               <span>Coins</span>
               <strong>{Math.floor(coins).toLocaleString()}</strong>
             </div>
+            <a className="github-btn" href={GITHUB_URL} target="_blank" rel="noreferrer" aria-label="Open GitHub">
+              GH
+            </a>
             <button
               className="settings-btn"
               onClick={() => setShowSettings((v) => !v)}
