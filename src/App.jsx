@@ -95,6 +95,8 @@ const skinCatalog = [
   },
 ]
 
+const upgradeTitleById = Object.fromEntries(upgradeCatalog.map((upgrade) => [upgrade.id, upgrade.title]))
+
 const SKIN_IDS = new Set(skinCatalog.map((skin) => skin.id))
 const DEFAULT_SKIN_ID = 'default'
 
@@ -471,6 +473,7 @@ function App() {
 
   const stateRef = useRef({ upgrades, slotLevels, slotFill, totalBalls, activeBalls: 0 })
   const nextLeaderboardRefreshAtRef = useRef(Date.now() + LEADERBOARD_REFRESH_MS)
+  const submitInFlightRef = useRef(false)
 
   useEffect(() => {
     stateRef.current = { ...stateRef.current, upgrades, slotLevels, slotFill, totalBalls }
@@ -587,15 +590,27 @@ function App() {
     }
   }, [])
 
-  const submitLeaderboardScore = useCallback(async () => {
-    const username = leaderboardUsername.trim()
+  const submitLeaderboardScore = useCallback(async (options = {}) => {
+    const { usernameOverride, showStatus = true, reason = 'manual' } = options
+    const username = (usernameOverride ?? leaderboardUsername).trim()
     if (!/^[a-zA-Z0-9 _-]{3,20}$/.test(username)) {
-      setLeaderboardSubmitStatus('Username must be 3-20 chars: letters, numbers, spaces, _ or -.')
+      if (showStatus) {
+        setLeaderboardSubmitStatus('Username must be 3-20 chars: letters, numbers, spaces, _ or -.')
+      }
       return
     }
 
-    setLeaderboardSubmitting(true)
-    setLeaderboardSubmitStatus('')
+    if (submitInFlightRef.current) {
+      return
+    }
+    submitInFlightRef.current = true
+
+    if (showStatus) {
+      setLeaderboardSubmitting(true)
+      setLeaderboardSubmitStatus('')
+    }
+
+    console.log('[leaderboard] submit start', { reason, username })
 
     try {
       const response = await fetch(apiUrl('/api/leaderboard/submit'), {
@@ -618,7 +633,15 @@ function App() {
       const data = await response.json().catch(() => ({}))
 
       if (!response.ok) {
-        setLeaderboardSubmitStatus(typeof data?.error === 'string' ? data.error : 'Could not submit score.')
+        if (showStatus) {
+          setLeaderboardSubmitStatus(typeof data?.error === 'string' ? data.error : 'Could not submit score.')
+        }
+        console.error('[leaderboard] submit failed', {
+          reason,
+          username,
+          status: response.status,
+          error: typeof data?.error === 'string' ? data.error : null,
+        })
         return
       }
 
@@ -631,15 +654,46 @@ function App() {
       if (data.player) {
         setSelectedLeaderboardPlayer({ ...data.player, rank: data.rank })
       }
-      setLeaderboardSubmitStatus(`Submitted! Current rank: #${data.rank}`)
+      if (showStatus) {
+        setLeaderboardSubmitStatus(`Submitted! Current rank: #${data.rank}`)
+      }
+      console.log('[leaderboard] submit success', {
+        reason,
+        username,
+        rank: data.rank,
+        coins: data?.player?.coins ?? null,
+      })
       scheduleNextLeaderboardRefresh()
-      await refreshLeaderboard('submit')
+      await refreshLeaderboard(reason === 'auto' ? 'autosubmit' : 'submit')
     } catch {
-      setLeaderboardSubmitStatus('Submission failed. Check backend URL and CORS settings.')
+      if (showStatus) {
+        setLeaderboardSubmitStatus('Submission failed. Check backend URL and CORS settings.')
+      }
+      console.error('[leaderboard] submit request error', {
+        reason,
+        username,
+      })
     } finally {
-      setLeaderboardSubmitting(false)
+      submitInFlightRef.current = false
+      if (showStatus) {
+        setLeaderboardSubmitting(false)
+      }
     }
   }, [coins, leaderboardUsername, ownedSkins, refreshLeaderboard, scheduleNextLeaderboardRefresh, selectedSkin, slotLevels, totalBalls, totalCoins, upgrades])
+
+  useEffect(() => {
+    if (!committedUsername) {
+      return undefined
+    }
+
+    const intervalId = window.setInterval(() => {
+      submitLeaderboardScore({ usernameOverride: committedUsername, showStatus: false, reason: 'auto' })
+    }, LEADERBOARD_REFRESH_MS)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [committedUsername, submitLeaderboardScore])
 
   const addFloater = useCallback((x, y, text, kind = 'coin') => {
     const id = window.crypto.randomUUID()
@@ -1256,6 +1310,7 @@ function App() {
   const averageSlotLevel = Math.round(slotLevels.reduce((sum, level) => sum + level, 0) / slotLevels.length)
   const selectedPlayerUpgradeRows = selectedLeaderboardPlayer
     ? Object.entries(selectedLeaderboardPlayer.upgrades ?? {}).sort(([a], [b]) => a.localeCompare(b))
+      .map(([upgradeId, level]) => [upgradeTitleById[upgradeId] ?? upgradeId, level])
     : []
 
   return (
@@ -1466,7 +1521,7 @@ function App() {
                   <div className="leaderboard-player-grid">
                     <span>Coins</span>
                     <strong>{selectedLeaderboardPlayer.coins.toLocaleString()}</strong>
-                    <span>Total Coins</span>
+                    <span>Total Coins Ever</span>
                     <strong>{selectedLeaderboardPlayer.totalCoins.toLocaleString()}</strong>
                     <span>Balls</span>
                     <strong>{selectedLeaderboardPlayer.totalBalls}</strong>
