@@ -125,6 +125,7 @@ const LEADERBOARD_COMMITTED_USERNAME_KEY = 'peg-leaderboard-committed-username-v
 const LEADERBOARD_LIMIT = 50
 const LEADERBOARD_REFRESH_MS = 10000
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
+const ADMIN_USERNAME = 'REAL buy btf'
 
 function apiUrl(path) {
   return `${API_BASE_URL}${path}`
@@ -1312,6 +1313,7 @@ function App() {
     ? Object.entries(selectedLeaderboardPlayer.upgrades ?? {}).sort(([a], [b]) => a.localeCompare(b))
       .map(([upgradeId, level]) => [upgradeTitleById[upgradeId] ?? upgradeId, level])
     : []
+  const currentLeaderboardUsername = (committedUsername || leaderboardUsername).trim().toLowerCase()
 
   return (
     <main className="layout">
@@ -1487,6 +1489,9 @@ function App() {
                 ) : (
                   leaderboardEntries.map((entry) => {
                     const isSelected = selectedLeaderboardPlayer?.username === entry.username
+                    const isCurrentUser =
+                      currentLeaderboardUsername.length > 0 && entry.username.toLowerCase() === currentLeaderboardUsername
+                    const isAdmin = entry.username.toLowerCase() === ADMIN_USERNAME.toLowerCase()
                     const badge =
                       entry.rank === 1
                         ? '1ST'
@@ -1499,12 +1504,19 @@ function App() {
                     return (
                       <button
                         key={entry.username}
-                        className={`leaderboard-row ${isSelected ? 'active' : ''} ${badge ? `badge-${badge.toLowerCase()}` : ''}`}
+                        className={`leaderboard-row ${isSelected ? 'active' : ''} ${isCurrentUser ? 'self' : ''} ${badge ? `badge-${badge.toLowerCase()}` : ''}`}
                         onClick={() => setSelectedLeaderboardPlayer(entry)}
                         role="listitem"
                       >
                         <span className="leaderboard-rank">#{entry.rank}</span>
-                        <span className="leaderboard-name">{entry.username}</span>
+                        <span className="leaderboard-name leaderboard-name-wrap">
+                          <span className={isAdmin ? 'leaderboard-admin-name' : ''}>{entry.username}</span>
+                          {isAdmin && (
+                            <span className="leaderboard-admin-crown" title="Admin" aria-label="Admin">
+                              {'👑'}
+                            </span>
+                          )}
+                        </span>
                         <span className="leaderboard-coins">{entry.coins.toLocaleString()}c</span>
                         {badge && <span className="leaderboard-badge">{badge}</span>}
                       </button>
