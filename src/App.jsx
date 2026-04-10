@@ -118,7 +118,9 @@ const UPGRADE_MIN_LEVELS = {
   gatekeeperLevel: 0,
 }
 
-const UPGRADE_MAX_LEVELS = Object.fromEntries(upgradeCatalog.map((upgrade) => [upgrade.id, upgrade.maxLevel]))
+const UPGRADE_MAX_LEVELS = Object.fromEntries(
+  upgradeCatalog.map((upgrade) => [upgrade.id, upgrade.id === 'gatekeeperLevel' ? upgrade.maxLevel : Number.POSITIVE_INFINITY]),
+)
 const SAVE_STORAGE_KEY = 'peg-progress-v1'
 const LEADERBOARD_USERNAME_KEY = 'peg-leaderboard-username-v1'
 const LEADERBOARD_COMMITTED_USERNAME_KEY = 'peg-leaderboard-committed-username-v1'
@@ -1256,7 +1258,8 @@ function App() {
       }
 
       const currentLevel = upgrades[upgradeId]
-      if (currentLevel >= data.maxLevel) {
+      const maxLevel = UPGRADE_MAX_LEVELS[upgradeId] ?? Number.POSITIVE_INFINITY
+      if (currentLevel >= maxLevel) {
         audioRef.current?.fail()
         return
       }
@@ -1609,7 +1612,9 @@ function App() {
               {upgradeCatalog.map((upgrade) => {
                 const level = upgrades[upgrade.id]
                 const cost = getUpgradeCost(upgrade.id, level + 1)
-                const isMaxed = level >= upgrade.maxLevel
+                const maxLevel = UPGRADE_MAX_LEVELS[upgrade.id] ?? Number.POSITIVE_INFINITY
+                const hasMax = Number.isFinite(maxLevel)
+                const isMaxed = hasMax && level >= maxLevel
                 return (
                   <article key={upgrade.id} className={`upgrade-card ${isMaxed ? 'maxed' : ''}`}>
                     <div>
@@ -1617,7 +1622,7 @@ function App() {
                       <p>{upgrade.description}</p>
                     </div>
                     <div className="upgrade-meta">
-                      <span>Lv {level}/{upgrade.maxLevel}</span>
+                      <span>{hasMax ? `Lv ${level}/${maxLevel}` : `Lv ${level}`}</span>
                       <button disabled={isMaxed || coins < cost} onClick={() => buyUpgrade(upgrade.id)}>
                         {isMaxed ? 'MAX' : `Buy • ${cost}`}
                       </button>
