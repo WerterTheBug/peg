@@ -19,7 +19,14 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? '')
 const USERNAME_PATTERN = /^[a-zA-Z0-9 _-]{3,20}$/
 
 function clampNumber(value, fallback = 0) {
-  const parsed = Number(value)
+  let parsed = Number(value)
+  if (!Number.isFinite(parsed) && value && typeof value === 'object') {
+    if (value._bsontype === 'Long' && typeof value.toString === 'function') {
+      parsed = Number(value.toString())
+    } else if (value._bsontype === 'Decimal128' && typeof value.toString === 'function') {
+      parsed = Number(value.toString())
+    }
+  }
   if (!Number.isFinite(parsed)) {
     return fallback
   }
@@ -238,16 +245,19 @@ async function createMongoStorage(uri) {
         { upsert: true },
       )
 
+      const savedDoc = await Entry.findOne({ usernameKey }).lean()
+      const player = savedDoc ? mapMongoDocToEntry(savedDoc) : entry
+
       const rankAbove = await Entry.countDocuments({
         $or: [
-          { coins: { $gt: entry.coins } },
-          { coins: entry.coins, username: { $lt: entry.username } },
+          { coins: { $gt: player.coins } },
+          { coins: player.coins, username: { $lt: player.username } },
         ],
       })
 
       return {
         rank: rankAbove + 1,
-        player: entry,
+        player,
       }
     },
   }
