@@ -9,6 +9,68 @@
   box-sizing: border-box;
 }
 
+.update-alert-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(4, 8, 12, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.update-alert-card {
+  width: min(560px, 100%);
+  border: 2px solid #ffb700;
+  background: linear-gradient(180deg, #161008, #0f0f0f 42%);
+  box-shadow: 0 0 0 2px #1a1406, 0 0 24px #ffb70055;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.update-alert-card h2 {
+  margin: 0;
+  color: #ffb700;
+  font: 400 0.92rem/1.4 'Press Start 2P', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.update-alert-subtitle {
+  margin: 0;
+  color: #f5dc8c;
+  font: 400 1.1rem/1.35 'VT323', monospace;
+}
+
+.update-alert-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #d7e2f1;
+  font: 400 1rem/1.4 'VT323', monospace;
+}
+
+.update-alert-button {
+  align-self: flex-end;
+  border: 2px solid #ffb700;
+  background: #ffb700;
+  color: #080808;
+  font: 400 1rem/1 'VT323', monospace;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.update-alert-button:hover {
+  background: #080808;
+  color: #ffb700;
+}
+
 .main-panel {
   border: 2px solid #00ff41;
   background: #0e0e0e;

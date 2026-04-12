@@ -122,10 +122,12 @@ const UPGRADE_MAX_LEVELS = Object.fromEntries(
   upgradeCatalog.map((upgrade) => [upgrade.id, upgrade.id === 'gatekeeperLevel' ? upgrade.maxLevel : Number.POSITIVE_INFINITY]),
 )
 const SAVE_STORAGE_KEY = 'peg-progress-v1'
+const UPDATE_SEEN_STORAGE_KEY = 'seenUpdate'
 const LEADERBOARD_USERNAME_KEY = 'peg-leaderboard-username-v1'
 const LEADERBOARD_COMMITTED_USERNAME_KEY = 'peg-leaderboard-committed-username-v1'
 const LEADERBOARD_LIMIT = 50
 const LEADERBOARD_REFRESH_MS = 10000
+const PROGRESS_SYNC_MS = 5000
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
 const ADMIN_USERNAME = 'REAL buy btf'
 
@@ -442,6 +444,7 @@ function App() {
   const [boardShake, setBoardShake] = useState(false)
   const [floaters, setFloaters] = useState([])
   const [showSettings, setShowSettings] = useState(false)
+  const [showUpdateAlert, setShowUpdateAlert] = useState(false)
   const [mainTab, setMainTab] = useState('game')
   const [shopTab, setShopTab] = useState('upgrades')
   const [leaderboardEntries, setLeaderboardEntries] = useState([])
@@ -486,10 +489,31 @@ function App() {
   const stateRef = useRef({ upgrades, slotLevels, slotFill, totalBalls, goldenBalls, activeBalls: 0 })
   const nextLeaderboardRefreshAtRef = useRef(Date.now() + LEADERBOARD_REFRESH_MS)
   const submitInFlightRef = useRef(false)
+  const latestProgressRef = useRef(null)
+  const latestProgressHashRef = useRef('')
+  const lastRemoteSavedHashRef = useRef('')
+  const hasUnsyncedRemoteProgressRef = useRef(false)
 
   useEffect(() => {
     stateRef.current = { ...stateRef.current, upgrades, slotLevels, slotFill, totalBalls, goldenBalls }
   }, [upgrades, slotLevels, slotFill, totalBalls, goldenBalls])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    try {
+      const hasSeenUpdate = window.localStorage.getItem(UPDATE_SEEN_STORAGE_KEY) === 'true'
+      if (!hasSeenUpdate) {
+        setShowUpdateAlert(true)
+        window.localStorage.setItem(UPDATE_SEEN_STORAGE_KEY, 'true')
+      }
+    } catch {
+      // If storage is unavailable, still show the update alert for the current session.
+      setShowUpdateAlert(true)
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -510,10 +534,19 @@ function App() {
     }
     try {
       window.localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(payload))
+      latestProgressRef.current = payload
+      latestProgressHashRef.current = JSON.stringify(payload)
+
+      if (committedUsername) {
+        hasUnsyncedRemoteProgressRef.current = latestProgressHashRef.current !== lastRemoteSavedHashRef.current
+      } else {
+        hasUnsyncedRemoteProgressRef.current = false
+      }
     } catch {
       // Ignore storage write errors and continue gameplay.
+      console.error('[progress] local save failed, remote sync fallback still available if configured')
     }
-  }, [coins, totalCoins, totalBalls, goldenBalls, upgrades, slotLevels, slotFill, ownedSkins, selectedSkin, soundOn, volume])
+  }, [coins, committedUsername, totalCoins, totalBalls, goldenBalls, upgrades, slotLevels, slotFill, ownedSkins, selectedSkin, soundOn, volume])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -614,6 +647,7 @@ function App() {
     }
 
     if (submitInFlightRef.current) {
+      console.log('[progress] remote sync skipped, submit already in-flight', { reason, username })
       return
     }
     submitInFlightRef.current = true
@@ -623,7 +657,30 @@ function App() {
       setLeaderboardSubmitStatus('')
     }
 
-    console.log('[leaderboard] submit start', { reason, username })
+    const payload = {
+      username,
+      coins: Math.floor(coins),
+      totalCoins: Math.floor(totalCoins),
+      totalBalls,
+      goldenBalls,
+      upgrades,
+      slotLevels,
+      ownedSkins,
+      selectedSkin,
+    }
+
+    const payloadHash = JSON.stringify({
+      coins: payload.coins,
+      totalCoins: payload.totalCoins,
+      totalBalls: payload.totalBalls,
+      goldenBalls: payload.goldenBalls,
+      upgrades: payload.upgrades,
+      slotLevels: payload.slotLevels,
+      ownedSkins: payload.ownedSkins,
+      selectedSkin: payload.selectedSkin,
+    })
+
+    console.log('[leaderboard] submit start', { reason, username, payloadHash })
 
     try {
       const response = await fetch(apiUrl('/api/leaderboard/submit'), {
@@ -631,17 +688,7 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          username,
-          coins: Math.floor(coins),
-          totalCoins: Math.floor(totalCoins),
-          totalBalls,
-          goldenBalls,
-          upgrades,
-          slotLevels,
-          ownedSkins,
-          selectedSkin,
-        }),
+        body: JSON.stringify(payload),
       })
 
       const data = await response.json().catch(() => ({}))
@@ -677,6 +724,13 @@ function App() {
         rank: data.rank,
         coins: data?.player?.coins ?? null,
       })
+      lastRemoteSavedHashRef.current = payloadHash
+      hasUnsyncedRemoteProgressRef.current = payloadHash !== '' && payloadHash === latestProgressHashRef.current
+      console.log('[progress] remote sync success', {
+        reason,
+        username,
+        hasUnsyncedRemoteProgress: hasUnsyncedRemoteProgressRef.current,
+      })
       scheduleNextLeaderboardRefresh()
       await refreshLeaderboard(reason === 'auto' ? 'autosubmit' : 'submit')
     } catch {
@@ -684,6 +738,10 @@ function App() {
         setLeaderboardSubmitStatus('Submission failed. Check backend URL and CORS settings.')
       }
       console.error('[leaderboard] submit request error', {
+        reason,
+        username,
+      })
+      console.error('[progress] remote sync failed; local progress remains in browser storage', {
         reason,
         username,
       })
@@ -700,14 +758,110 @@ function App() {
       return undefined
     }
 
+    console.log('[progress] remote autosync started', { intervalMs: PROGRESS_SYNC_MS, username: committedUsername })
+
     const intervalId = window.setInterval(() => {
-      submitLeaderboardScore({ usernameOverride: committedUsername, showStatus: false, reason: 'auto' })
-    }, LEADERBOARD_REFRESH_MS)
+      const hasPendingChanges = hasUnsyncedRemoteProgressRef.current
+      console.log('[progress] autosync tick', {
+        hasPendingChanges,
+        action: 'push-to-backend',
+      })
+      submitLeaderboardScore({
+        usernameOverride: committedUsername,
+        showStatus: false,
+        reason: hasPendingChanges ? 'auto' : 'auto-heartbeat',
+      })
+    }, PROGRESS_SYNC_MS)
 
     return () => {
       window.clearInterval(intervalId)
     }
   }, [committedUsername, submitLeaderboardScore])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const onBeforeUnload = (event) => {
+      if (!committedUsername) {
+        return
+      }
+      const hasPendingSave = hasUnsyncedRemoteProgressRef.current || submitInFlightRef.current
+      if (!hasPendingSave) {
+        return
+      }
+
+      console.warn('[progress] tab close blocked: unsynced progress detected')
+      event.preventDefault()
+      event.returnValue = 'Your latest progress is still saving. Are you sure you want to leave?'
+    }
+
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
+    }
+  }, [committedUsername])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const flushProgressOnExit = () => {
+      if (!committedUsername || !hasUnsyncedRemoteProgressRef.current) {
+        return
+      }
+
+      const payload = latestProgressRef.current
+      if (!payload) {
+        return
+      }
+
+      const requestBody = JSON.stringify({
+        username: committedUsername,
+        coins: Math.floor(payload.coins),
+        totalCoins: Math.floor(payload.totalCoins),
+        totalBalls: payload.totalBalls,
+        goldenBalls: payload.goldenBalls,
+        upgrades: payload.upgrades,
+        slotLevels: payload.slotLevels,
+        ownedSkins: payload.ownedSkins,
+        selectedSkin: payload.selectedSkin,
+      })
+
+      if (navigator.sendBeacon) {
+        const blob = new Blob([requestBody], { type: 'application/json' })
+        const queued = navigator.sendBeacon(apiUrl('/api/leaderboard/submit'), blob)
+        console.log('[progress] pagehide sync attempt via sendBeacon', { queued })
+        return
+      }
+
+      fetch(apiUrl('/api/leaderboard/submit'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: requestBody,
+        keepalive: true,
+      }).catch(() => {
+        console.error('[progress] keepalive sync failed during pagehide')
+      })
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushProgressOnExit()
+      }
+    }
+
+    window.addEventListener('pagehide', flushProgressOnExit)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('pagehide', flushProgressOnExit)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [committedUsername])
 
   const addFloater = useCallback((x, y, text, kind = 'coin') => {
     const id = window.crypto.randomUUID()
@@ -1366,6 +1520,22 @@ function App() {
 
   return (
     <main className="layout">
+      {showUpdateAlert && (
+        <div className="update-alert-backdrop" role="dialog" aria-modal="true" aria-labelledby="update-alert-title">
+          <article className="update-alert-card">
+            <h2 id="update-alert-title">New Update!</h2>
+            <p className="update-alert-subtitle">Golden balls? That sounds expensive!</p>
+            <ul className="update-alert-list">
+              <li>Golden balls that generate 2x more money from pegs</li>
+              <li>Base gravity is now half of what it was before</li>
+        
+            </ul>
+            <button className="update-alert-button" onClick={() => setShowUpdateAlert(false)}>
+              Got it
+            </button>
+          </article>
+        </div>
+      )}
       <section className="main-panel">
         <header className="topbar">
           <div>
