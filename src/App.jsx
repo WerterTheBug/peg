@@ -725,7 +725,7 @@ function App() {
         coins: data?.player?.coins ?? null,
       })
       lastRemoteSavedHashRef.current = payloadHash
-      hasUnsyncedRemoteProgressRef.current = payloadHash !== '' && payloadHash === latestProgressHashRef.current
+      hasUnsyncedRemoteProgressRef.current = payloadHash !== latestProgressHashRef.current
       console.log('[progress] remote sync success', {
         reason,
         username,
@@ -764,19 +764,32 @@ function App() {
       const hasPendingChanges = hasUnsyncedRemoteProgressRef.current
       console.log('[progress] autosync tick', {
         hasPendingChanges,
-        action: 'push-to-backend',
+        action: hasPendingChanges ? 'push-to-backend' : 'refresh-only',
       })
+      if (!hasPendingChanges) {
+        refreshLeaderboard('auto-heartbeat')
+        return
+      }
       submitLeaderboardScore({
         usernameOverride: committedUsername,
         showStatus: false,
-        reason: hasPendingChanges ? 'auto' : 'auto-heartbeat',
+        reason: 'auto',
       })
     }, PROGRESS_SYNC_MS)
 
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [committedUsername, submitLeaderboardScore])
+  }, [committedUsername, refreshLeaderboard, submitLeaderboardScore])
+
+  const handleLeaderboardPrimaryAction = useCallback(() => {
+    if (committedUsername) {
+      refreshLeaderboard('manual-refresh')
+      scheduleNextLeaderboardRefresh()
+      return
+    }
+    submitLeaderboardScore()
+  }, [committedUsername, refreshLeaderboard, scheduleNextLeaderboardRefresh, submitLeaderboardScore])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1692,8 +1705,8 @@ function App() {
                   readOnly={!!committedUsername}
                   onChange={(event) => setLeaderboardUsername(event.target.value)}
                 />
-                <button onClick={submitLeaderboardScore} disabled={leaderboardSubmitting}>
-                  {leaderboardSubmitting ? 'Sending...' : committedUsername ? 'Update' : 'Submit'}
+                <button onClick={handleLeaderboardPrimaryAction} disabled={leaderboardSubmitting || (committedUsername && leaderboardLoading)}>
+                  {leaderboardSubmitting ? 'Sending...' : committedUsername ? (leaderboardLoading ? 'Refreshing...' : 'Refresh') : 'Submit'}
                 </button>
                 {committedUsername && (
                   <button
