@@ -880,12 +880,11 @@ function App() {
   const handleLeaderboardPrimaryAction = useCallback(() => {
     if (committedUsername) {
       refreshLeaderboard('manual-refresh')
-      hydrateProgressFromRemote(committedUsername, 'manual-refresh')
       scheduleNextLeaderboardRefresh()
       return
     }
     submitLeaderboardScore()
-  }, [committedUsername, hydrateProgressFromRemote, refreshLeaderboard, scheduleNextLeaderboardRefresh, submitLeaderboardScore])
+  }, [committedUsername, refreshLeaderboard, scheduleNextLeaderboardRefresh, submitLeaderboardScore])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
