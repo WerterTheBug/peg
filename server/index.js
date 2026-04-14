@@ -1,4 +1,5 @@
 import cors from 'cors'
+import crypto from 'node:crypto'
 import express from 'express'
 import fs from 'node:fs/promises'
 import mongoose from 'mongoose'
@@ -19,6 +20,7 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? '')
   .filter(Boolean)
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9 _-]{3,20}$/
+const OWNER_TOKEN_PATTERN = /^[a-f0-9]{64}$/i
 
 function clampNumber(value, fallback = 0) {
   let parsed = Number(value)
@@ -44,6 +46,48 @@ function sanitizeUsername(raw) {
     return null
   }
   return trimmed
+}
+
+function sanitizeOwnerToken(raw) {
+  if (typeof raw !== 'string') {
+    return null
+  }
+  const trimmed = raw.trim().toLowerCase()
+  if (!OWNER_TOKEN_PATTERN.test(trimmed)) {
+    return null
+  }
+  return trimmed
+}
+
+function hashOwnerToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+function normalizeOwnerTokenHash(raw) {
+  if (typeof raw !== 'string') {
+    return null
+  }
+  const trimmed = raw.trim().toLowerCase()
+  if (!OWNER_TOKEN_PATTERN.test(trimmed)) {
+    return null
+  }
+  return trimmed
+}
+
+function toPublicEntry(entry) {
+  const { ownerTokenHash: _ownerTokenHash, ...publicEntry } = entry
+  return publicEntry
+}
+
+function createRankedResponse(entries, username) {
+  const sorted = sortByCoins(entries)
+  const rank = sorted.findIndex((item) => item.username.toLowerCase() === username.toLowerCase()) + 1
+  const player = sorted.find((item) => item.username.toLowerCase() === username.toLowerCase())
+
+  return {
+    rank,
+    player: player ? toPublicEntry(player) : null,
+  }
 }
 
 function normalizeUpgrades(raw) {
@@ -112,7 +156,18 @@ async function readEntries() {
     if (!Array.isArray(parsed)) {
       return []
     }
-    return parsed.map(normalizeEntry).filter(Boolean)
+    return parsed
+      .map((raw) => {
+        const entry = normalizeEntry(raw)
+        if (!entry) {
+          return null
+        }
+        return {
+          ...entry,
+          ownerTokenHash: normalizeOwnerTokenHash(raw?.ownerTokenHash),
+        }
+      })
+      .filter(Boolean)
   } catch {
     return []
   }
@@ -137,7 +192,7 @@ async function createFileStorage() {
   return {
     mode: 'file',
     async list(limit) {
-      return sortByCoins(await readEntries()).slice(0, limit)
+      return sortByCoins(await readEntries()).slice(0, limit).map(toPublicEntry)
     },
     async getByUsername(username) {
       const entries = sortByCoins(await readEntries())
@@ -147,27 +202,39 @@ async function createFileStorage() {
       }
       return {
         rank: index + 1,
-        player: entries[index],
+        player: toPublicEntry(entries[index]),
       }
     },
-    async upsert(entry) {
+    async upsert(entry, ownerTokenHash) {
       const entries = await readEntries()
       const existingIndex = entries.findIndex((item) => item.username.toLowerCase() === entry.username.toLowerCase())
 
       if (existingIndex >= 0) {
-        entries[existingIndex] = entry
+        const existingOwnerTokenHash = normalizeOwnerTokenHash(entries[existingIndex].ownerTokenHash)
+        if (!existingOwnerTokenHash) {
+          return {
+            error: 'legacy_entry_locked',
+          }
+        }
+        if (existingOwnerTokenHash !== ownerTokenHash) {
+          return {
+            error: 'ownership_required',
+          }
+        }
+
+        entries[existingIndex] = {
+          ...entry,
+          ownerTokenHash: existingOwnerTokenHash,
+        }
       } else {
-        entries.push(entry)
+        entries.push({
+          ...entry,
+          ownerTokenHash,
+        })
       }
 
-      const sorted = sortByCoins(entries)
-      await writeEntries(sorted)
-      const rank = sorted.findIndex((item) => item.username.toLowerCase() === entry.username.toLowerCase()) + 1
-
-      return {
-        rank,
-        player: entry,
-      }
+      await writeEntries(sortByCoins(entries))
+      return createRankedResponse(entries, entry.username)
     },
   }
 }
@@ -184,6 +251,7 @@ function createMongoEntryModel() {
       slotLevels: { type: [Number], default: [] },
       ownedSkins: { type: [String], default: [] },
       selectedSkin: { type: String, default: 'default' },
+      ownerTokenHash: { type: String, default: null },
       updatedAt: { type: String, required: true },
     },
     {
@@ -194,8 +262,15 @@ function createMongoEntryModel() {
   return mongoose.models.LeaderboardEntry || mongoose.model('LeaderboardEntry', schema, 'leaderboard_entries')
 }
 
-function mapMongoDocToEntry(doc) {
-  return normalizeEntry(doc) ?? normalizeEntry({ username: doc.username })
+function mapMongoDocToStoredEntry(doc) {
+  const entry = normalizeEntry(doc) ?? normalizeEntry({ username: doc.username })
+  if (!entry) {
+    return null
+  }
+  return {
+    ...entry,
+    ownerTokenHash: normalizeOwnerTokenHash(doc?.ownerTokenHash),
+  }
 }
 
 async function createMongoStorage(uri) {
@@ -206,7 +281,7 @@ async function createMongoStorage(uri) {
     mode: 'mongo',
     async list(limit) {
       const docs = await Entry.find({}).sort({ coins: -1, username: 1 }).limit(limit).lean()
-      return docs.map(mapMongoDocToEntry).filter(Boolean)
+      return docs.map(mapMongoDocToStoredEntry).filter(Boolean).map(toPublicEntry)
     },
     async getByUsername(username) {
       const usernameKey = username.toLowerCase()
@@ -215,7 +290,11 @@ async function createMongoStorage(uri) {
         return null
       }
 
-      const player = mapMongoDocToEntry(doc)
+      const storedEntry = mapMongoDocToStoredEntry(doc)
+      if (!storedEntry) {
+        return null
+      }
+      const player = toPublicEntry(storedEntry)
       const rankAbove = await Entry.countDocuments({
         $or: [
           { coins: { $gt: player.coins } },
@@ -228,8 +307,23 @@ async function createMongoStorage(uri) {
         player,
       }
     },
-    async upsert(entry) {
+    async upsert(entry, ownerTokenHash) {
       const usernameKey = entry.username.toLowerCase()
+      const existingDoc = await Entry.findOne({ usernameKey }).lean()
+      if (existingDoc) {
+        const existingOwnerTokenHash = normalizeOwnerTokenHash(existingDoc.ownerTokenHash)
+        if (!existingOwnerTokenHash) {
+          return {
+            error: 'legacy_entry_locked',
+          }
+        }
+        if (existingOwnerTokenHash !== ownerTokenHash) {
+          return {
+            error: 'ownership_required',
+          }
+        }
+      }
+
       // Use collection.updateOne to bypass Mongoose's Int32 coercion so that
       // coins and totalCoins are always stored as BSON Double regardless of
       // magnitude, allowing values well beyond the Int32 limit (2,147,483,647).
@@ -242,13 +336,15 @@ async function createMongoStorage(uri) {
             usernameKey,
             coins: new Double(entry.coins),
             totalCoins: new Double(entry.totalCoins),
+            ownerTokenHash,
           },
         },
         { upsert: true },
       )
 
       const savedDoc = await Entry.findOne({ usernameKey }).lean()
-      const player = savedDoc ? mapMongoDocToEntry(savedDoc) : entry
+      const storedEntry = savedDoc ? mapMongoDocToStoredEntry(savedDoc) : { ...entry, ownerTokenHash }
+      const player = storedEntry ? toPublicEntry(storedEntry) : toPublicEntry({ ...entry, ownerTokenHash })
 
       const rankAbove = await Entry.countDocuments({
         $or: [
@@ -363,6 +459,13 @@ app.post('/api/leaderboard/submit', async (req, res) => {
     return
   }
 
+  const ownerToken = sanitizeOwnerToken(req.get('x-player-token') ?? req.body?.ownerToken)
+  if (!ownerToken) {
+    res.status(401).json({ error: 'A valid player ownership token is required for submissions.' })
+    return
+  }
+  const ownerTokenHash = hashOwnerToken(ownerToken)
+
   const username = sanitizeUsername(req.body?.username)
   if (!username) {
     res.status(400).json({ error: 'Username must be 3-20 characters using letters, numbers, spaces, _ or -.' })
@@ -380,7 +483,17 @@ app.post('/api/leaderboard/submit', async (req, res) => {
     return
   }
 
-  const result = await storage.upsert(nextEntry)
+  const result = await storage.upsert(nextEntry, ownerTokenHash)
+
+  if (result?.error === 'ownership_required') {
+    res.status(403).json({ error: 'Submission blocked. This username is owned by another player token.' })
+    return
+  }
+
+  if (result?.error === 'legacy_entry_locked') {
+    res.status(409).json({ error: 'This legacy username is locked and cannot be updated without migration.' })
+    return
+  }
 
   res.json({
     ok: true,

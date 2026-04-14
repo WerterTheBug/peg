@@ -124,11 +124,21 @@ const UPGRADE_MAX_LEVELS = Object.fromEntries(
 const UPDATE_SEEN_STORAGE_KEY = 'seenUpdate'
 const LEADERBOARD_USERNAME_KEY = 'peg-leaderboard-username-v1'
 const LEADERBOARD_COMMITTED_USERNAME_KEY = 'peg-leaderboard-committed-username-v1'
+const LEADERBOARD_OWNER_TOKEN_KEY = 'peg-leaderboard-owner-token-v1'
 const LEADERBOARD_LIMIT = 50
 const LEADERBOARD_REFRESH_MS = 10000
 const PROGRESS_SYNC_MS = 5000
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
 const ADMIN_USERNAME = 'REAL buy btf'
+
+function generateOwnerToken() {
+  if (typeof window === 'undefined' || !window.crypto?.getRandomValues) {
+    return ''
+  }
+  const bytes = new Uint8Array(32)
+  window.crypto.getRandomValues(bytes)
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
 
 function apiUrl(path) {
   return `${API_BASE_URL}${path}`
@@ -480,6 +490,26 @@ function App() {
       return ''
     }
   })
+  const [leaderboardOwnerToken] = useState(() => {
+    if (typeof window === 'undefined') {
+      return ''
+    }
+
+    try {
+      const existing = (window.localStorage.getItem(LEADERBOARD_OWNER_TOKEN_KEY) ?? '').trim().toLowerCase()
+      if (/^[a-f0-9]{64}$/.test(existing)) {
+        return existing
+      }
+
+      const created = generateOwnerToken()
+      if (created) {
+        window.localStorage.setItem(LEADERBOARD_OWNER_TOKEN_KEY, created)
+      }
+      return created
+    } catch {
+      return generateOwnerToken()
+    }
+  })
   const [soundOn, setSoundOn] = useState(initialProgress.soundOn)
   const [volume, setVolume] = useState(initialProgress.volume)
   const [ownedSkins, setOwnedSkins] = useState(initialProgress.ownedSkins)
@@ -749,6 +779,7 @@ function App() {
       slotLevels,
       ownedSkins,
       selectedSkin,
+      ownerToken: leaderboardOwnerToken,
     }
 
     const payloadHash = createRemoteSyncHash(payload)
@@ -760,6 +791,7 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-player-token': leaderboardOwnerToken,
         },
         body: JSON.stringify(payload),
       })
@@ -831,7 +863,7 @@ function App() {
         setLeaderboardSubmitting(false)
       }
     }
-  }, [applyProgressSnapshot, coins, goldenBalls, initialProgress, leaderboardUsername, ownedSkins, refreshLeaderboard, scheduleNextLeaderboardRefresh, selectedSkin, slotLevels, totalBalls, totalCoins, upgrades])
+  }, [applyProgressSnapshot, coins, goldenBalls, initialProgress, leaderboardOwnerToken, leaderboardUsername, ownedSkins, refreshLeaderboard, scheduleNextLeaderboardRefresh, selectedSkin, slotLevels, totalBalls, totalCoins, upgrades])
 
   const syncCommittedUserProgress = useCallback(async (options = {}) => {
     const {
@@ -992,6 +1024,7 @@ function App() {
         slotLevels: payload.slotLevels,
         ownedSkins: payload.ownedSkins,
         selectedSkin: payload.selectedSkin,
+        ownerToken: leaderboardOwnerToken,
       })
 
       if (navigator.sendBeacon) {
@@ -1005,6 +1038,7 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-player-token': leaderboardOwnerToken,
         },
         body: requestBody,
         keepalive: true,
@@ -1025,7 +1059,7 @@ function App() {
       window.removeEventListener('pagehide', flushProgressOnExit)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [committedUsername])
+  }, [committedUsername, leaderboardOwnerToken])
 
   const addFloater = useCallback((x, y, text, kind = 'coin') => {
     const id = window.crypto.randomUUID()

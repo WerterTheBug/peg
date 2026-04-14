@@ -172,6 +172,14 @@ Base URL (dev): `http://localhost:3001`
 - `GET /api/leaderboard/:username` - single player profile and rank
 - `POST /api/leaderboard/submit` - create/update a player entry
 
+Submission ownership protection:
+
+- `POST /api/leaderboard/submit` now requires a player ownership token.
+- Send token via `x-player-token` header (or `ownerToken` in JSON body).
+- New usernames are bound to the first valid token that creates them.
+- Existing protected usernames can only be updated with the same token.
+- Legacy usernames without a stored token are locked from updates until migrated.
+
 Submission payload fields used by the app:
 
 - `username` (3-20 chars, letters/numbers/spaces/`_`/`-`)
@@ -182,6 +190,7 @@ Submission payload fields used by the app:
 - `slotLevels`
 - `ownedSkins`
 - `selectedSkin`
+- `ownerToken` (64-char hex token, or pass in `x-player-token` header)
 
 Data persistence:
 
