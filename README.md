@@ -1,6 +1,6 @@
 # Peg
 
-Retro roguelike browser-based Plinko built with React, Vite, and Matter.js physics.
+Retro roguelike browser-based Plinko built with React, Vite, and Matter.js.
 
 ## Features
 
