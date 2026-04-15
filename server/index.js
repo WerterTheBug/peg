@@ -4,6 +4,7 @@ import express from 'express'
 import fs from 'node:fs/promises'
 import mongoose from 'mongoose'
 import path from 'node:path'
+import rateLimit from 'express-rate-limit'
 import { fileURLToPath } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -14,6 +15,7 @@ const PORT = Number(process.env.PORT) || 3001
 const MONGODB_URI = process.env.MONGODB_URI?.trim()
 const READ_ONLY_MODE = /^(1|true|yes)$/i.test(process.env.READ_ONLY_MODE ?? '')
 const EMERGENCY_SHUTDOWN = /^(1|true|yes)$/i.test(process.env.EMERGENCY_SHUTDOWN ?? '')
+const SUBMIT_RATE_LIMIT_MAX = Math.max(1, Number(process.env.SUBMIT_RATE_LIMIT_MAX) || 30)
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? '')
   .split(',')
   .map((origin) => origin.trim())
@@ -21,8 +23,20 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? '')
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9 _-]{3,20}$/
 const OWNER_TOKEN_PATTERN = /^[a-f0-9]{64}$/i
+const MAX_RESOURCE_VALUE = Number.MAX_SAFE_INTEGER
+const MAX_TOTAL_BALLS = 9999
+const MAX_SLOT_LEVEL = 9999
+const VALID_SKIN_IDS = new Set(['default', 'ember', 'frostbyte', 'verdant', 'voidsteel', 'prisma'])
+const UPGRADE_LIMITS = {
+  ballsPerDrop: { min: 1, max: 20, fallback: 1 },
+  gravityLevel: { min: 1, max: 20, fallback: 1 },
+  pegLevel: { min: 1, max: 20, fallback: 1 },
+  rainbowLevel: { min: 0, max: 20, fallback: 0 },
+  slotGlobalLevel: { min: 1, max: 20, fallback: 1 },
+  gatekeeperLevel: { min: 0, max: 15, fallback: 0 },
+}
 
-function clampNumber(value, fallback = 0) {
+function clampNumber(value, fallback = 0, min = 0, max = MAX_RESOURCE_VALUE) {
   let parsed = Number(value)
   if (!Number.isFinite(parsed) && value && typeof value === 'object') {
     if (value._bsontype === 'Long' && typeof value.toString === 'function') {
@@ -34,7 +48,7 @@ function clampNumber(value, fallback = 0) {
   if (!Number.isFinite(parsed)) {
     return fallback
   }
-  return Math.max(0, Math.round(parsed))
+  return Math.min(max, Math.max(min, Math.round(parsed)))
 }
 
 function sanitizeUsername(raw) {
@@ -92,15 +106,14 @@ function createRankedResponse(entries, username) {
 
 function normalizeUpgrades(raw) {
   if (!raw || typeof raw !== 'object') {
-    return {}
+    return Object.fromEntries(
+      Object.entries(UPGRADE_LIMITS).map(([key, limits]) => [key, limits.fallback]),
+    )
   }
 
   const next = {}
-  for (const [key, value] of Object.entries(raw)) {
-    if (typeof key !== 'string' || key.length > 64) {
-      continue
-    }
-    next[key] = clampNumber(value, 0)
+  for (const [key, limits] of Object.entries(UPGRADE_LIMITS)) {
+    next[key] = clampNumber(raw[key], limits.fallback, limits.min, limits.max)
   }
   return next
 }
@@ -109,14 +122,18 @@ function normalizeSlotLevels(raw) {
   if (!Array.isArray(raw)) {
     return []
   }
-  return raw.slice(0, 20).map((entry) => clampNumber(entry, 1))
+  return raw.slice(0, 20).map((entry) => clampNumber(entry, 1, 1, MAX_SLOT_LEVEL))
 }
 
 function normalizeOwnedSkins(raw) {
   if (!Array.isArray(raw)) {
-    return []
+    return ['default']
   }
-  return [...new Set(raw.filter((entry) => typeof entry === 'string').slice(0, 80))]
+  const skins = [...new Set(raw.filter((entry) => typeof entry === 'string' && VALID_SKIN_IDS.has(entry)).slice(0, 80))]
+  if (!skins.includes('default')) {
+    skins.unshift('default')
+  }
+  return skins
 }
 
 function normalizeEntry(raw) {
@@ -126,17 +143,24 @@ function normalizeEntry(raw) {
   }
 
   const now = new Date().toISOString()
+  const totalBalls = clampNumber(raw?.totalBalls, 1, 1, MAX_TOTAL_BALLS)
+  const ownedSkins = normalizeOwnedSkins(raw?.ownedSkins)
+  const selectedSkin =
+    typeof raw?.selectedSkin === 'string' && VALID_SKIN_IDS.has(raw.selectedSkin) && ownedSkins.includes(raw.selectedSkin)
+      ? raw.selectedSkin
+      : 'default'
+
   return {
     username,
-    coins: clampNumber(raw?.coins, 0),
-    totalCoins: clampNumber(raw?.totalCoins, 0),
-    totalBalls: clampNumber(raw?.totalBalls, 1),
+    coins: clampNumber(raw?.coins, 0, 0, MAX_RESOURCE_VALUE),
+    totalCoins: clampNumber(raw?.totalCoins, 0, 0, MAX_RESOURCE_VALUE),
+    totalBalls,
     upgrades: normalizeUpgrades(raw?.upgrades),
     slotLevels: normalizeSlotLevels(raw?.slotLevels),
-    ownedSkins: normalizeOwnedSkins(raw?.ownedSkins),
-    selectedSkin: typeof raw?.selectedSkin === 'string' ? raw.selectedSkin : 'default',
+    ownedSkins,
+    selectedSkin,
     updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : now,
-    goldenBalls: clampNumber(raw?.goldenBalls, 0),
+    goldenBalls: clampNumber(raw?.goldenBalls, 0, 0, totalBalls),
   }
 }
 
@@ -190,6 +214,14 @@ function sortByCoins(entries) {
 }
 
 async function createFileStorage() {
+  let writeQueue = Promise.resolve()
+
+  function runExclusive(task) {
+    const next = writeQueue.then(task, task)
+    writeQueue = next.catch(() => undefined)
+    return next
+  }
+
   return {
     mode: 'file',
     async list(limit) {
@@ -207,35 +239,37 @@ async function createFileStorage() {
       }
     },
     async upsert(entry, ownerTokenHash) {
-      const entries = await readEntries()
-      const existingIndex = entries.findIndex((item) => item.username.toLowerCase() === entry.username.toLowerCase())
+      return runExclusive(async () => {
+        const entries = await readEntries()
+        const existingIndex = entries.findIndex((item) => item.username.toLowerCase() === entry.username.toLowerCase())
 
-      if (existingIndex >= 0) {
-        const existingOwnerTokenHash = normalizeOwnerTokenHash(entries[existingIndex].ownerTokenHash)
-        if (!existingOwnerTokenHash) {
-          return {
-            error: 'legacy_entry_locked',
+        if (existingIndex >= 0) {
+          const existingOwnerTokenHash = normalizeOwnerTokenHash(entries[existingIndex].ownerTokenHash)
+          if (!existingOwnerTokenHash) {
+            return {
+              error: 'legacy_entry_locked',
+            }
           }
-        }
-        if (existingOwnerTokenHash !== ownerTokenHash) {
-          return {
-            error: 'ownership_required',
+          if (existingOwnerTokenHash !== ownerTokenHash) {
+            return {
+              error: 'ownership_required',
+            }
           }
+
+          entries[existingIndex] = {
+            ...entry,
+            ownerTokenHash: existingOwnerTokenHash,
+          }
+        } else {
+          entries.push({
+            ...entry,
+            ownerTokenHash,
+          })
         }
 
-        entries[existingIndex] = {
-          ...entry,
-          ownerTokenHash: existingOwnerTokenHash,
-        }
-      } else {
-        entries.push({
-          ...entry,
-          ownerTokenHash,
-        })
-      }
-
-      await writeEntries(sortByCoins(entries))
-      return createRankedResponse(entries, entry.username)
+        await writeEntries(sortByCoins(entries))
+        return createRankedResponse(entries, entry.username)
+      })
     },
   }
 }
@@ -248,6 +282,7 @@ function createMongoEntryModel() {
       coins: { type: Number, required: true, default: 0 },
       totalCoins: { type: Number, required: true, default: 0 },
       totalBalls: { type: Number, required: true, default: 1 },
+      goldenBalls: { type: Number, required: true, default: 0 },
       upgrades: { type: mongoose.Schema.Types.Mixed, default: {} },
       slotLevels: { type: [Number], default: [] },
       ownedSkins: { type: [String], default: [] },
@@ -337,6 +372,7 @@ async function createMongoStorage(uri) {
             usernameKey,
             coins: new Double(entry.coins),
             totalCoins: new Double(entry.totalCoins),
+            goldenBalls: entry.goldenBalls,
             ownerTokenHash,
           },
         },
@@ -418,18 +454,23 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.get('/api/leaderboard', async (req, res) => {
-  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50))
-  const entries = await storage.list(limit)
+  try {
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50))
+    const entries = await storage.list(limit)
 
-  const withRank = entries.map((entry, index) => ({
-    rank: index + 1,
-    ...entry,
-  }))
+    const withRank = entries.map((entry, index) => ({
+      rank: index + 1,
+      ...entry,
+    }))
 
-  res.json({
-    entries: withRank,
-    updatedAt: new Date().toISOString(),
-  })
+    res.json({
+      entries: withRank,
+      updatedAt: new Date().toISOString(),
+    })
+  } catch (error) {
+    console.error('Failed to load leaderboard:', error)
+    res.status(500).json({ error: 'Failed to load leaderboard.' })
+  }
 })
 
 app.get('/api/leaderboard/:username', async (req, res) => {
@@ -439,19 +480,32 @@ app.get('/api/leaderboard/:username', async (req, res) => {
     return
   }
 
-  const result = await storage.getByUsername(username)
-  if (!result) {
-    res.status(404).json({ error: 'Player not found.' })
-    return
-  }
+  try {
+    const result = await storage.getByUsername(username)
+    if (!result) {
+      res.status(404).json({ error: 'Player not found.' })
+      return
+    }
 
-  res.json({
-    rank: result.rank,
-    player: result.player,
-  })
+    res.json({
+      rank: result.rank,
+      player: result.player,
+    })
+  } catch (error) {
+    console.error('Failed to load player profile:', error)
+    res.status(500).json({ error: 'Failed to load player profile.' })
+  }
 })
 
-app.post('/api/leaderboard/submit', async (req, res) => {
+const submitLimiter = rateLimit({
+  windowMs: 60_000,
+  max: SUBMIT_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many submissions. Please slow down.' },
+})
+
+app.post('/api/leaderboard/submit', submitLimiter, async (req, res) => {
   if (READ_ONLY_MODE) {
     res.status(503).json({
       error: 'Leaderboard submissions are temporarily disabled.',
@@ -460,7 +514,7 @@ app.post('/api/leaderboard/submit', async (req, res) => {
     return
   }
 
-  const ownerToken = sanitizeOwnerToken(req.get('x-player-token') ?? req.body?.ownerToken)
+  const ownerToken = sanitizeOwnerToken(req.get('x-player-token'))
   if (!ownerToken) {
     res.status(401).json({ error: 'A valid player ownership token is required for submissions.' })
     return
@@ -484,23 +538,28 @@ app.post('/api/leaderboard/submit', async (req, res) => {
     return
   }
 
-  const result = await storage.upsert(nextEntry, ownerTokenHash)
+  try {
+    const result = await storage.upsert(nextEntry, ownerTokenHash)
 
-  if (result?.error === 'ownership_required') {
-    res.status(403).json({ error: 'Submission blocked. This username is owned by another player token.' })
-    return
+    if (result?.error === 'ownership_required') {
+      res.status(403).json({ error: 'Submission blocked. This username is owned by another player token.' })
+      return
+    }
+
+    if (result?.error === 'legacy_entry_locked') {
+      res.status(409).json({ error: 'This legacy username is locked and cannot be updated without migration.' })
+      return
+    }
+
+    res.json({
+      ok: true,
+      rank: result.rank,
+      player: result.player,
+    })
+  } catch (error) {
+    console.error('Failed to submit leaderboard score:', error)
+    res.status(500).json({ error: 'Could not submit score.' })
   }
-
-  if (result?.error === 'legacy_entry_locked') {
-    res.status(409).json({ error: 'This legacy username is locked and cannot be updated without migration.' })
-    return
-  }
-
-  res.json({
-    ok: true,
-    rank: result.rank,
-    player: result.player,
-  })
 })
 
 async function initStorage() {

@@ -119,8 +119,9 @@ const UPGRADE_MIN_LEVELS = {
 }
 
 const UPGRADE_MAX_LEVELS = Object.fromEntries(
-  upgradeCatalog.map((upgrade) => [upgrade.id, upgrade.id === 'gatekeeperLevel' ? upgrade.maxLevel : Number.POSITIVE_INFINITY]),
+  upgradeCatalog.map((upgrade) => [upgrade.id, upgrade.maxLevel]),
 )
+const LOCAL_PROGRESS_STORAGE_KEY = 'peg-local-progress-v1'
 const UPDATE_SEEN_STORAGE_KEY = 'seenUpdate'
 const LEADERBOARD_USERNAME_KEY = 'peg-leaderboard-username-v1'
 const LEADERBOARD_COMMITTED_USERNAME_KEY = 'peg-leaderboard-committed-username-v1'
@@ -343,7 +344,38 @@ function defaultProgress() {
 }
 
 function loadProgress() {
-  return defaultProgress()
+  const base = defaultProgress()
+  if (typeof window === 'undefined') {
+    return base
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LOCAL_PROGRESS_STORAGE_KEY)
+    if (!raw) {
+      return base
+    }
+
+    const parsed = JSON.parse(raw)
+    const ownedSkins = normalizeOwnedSkins(parsed?.ownedSkins)
+    const totalBalls = clampNumber(parsed?.totalBalls, 1, 9999, base.totalBalls)
+    const goldenBalls = clampNumber(parsed?.goldenBalls, 0, totalBalls, base.goldenBalls)
+
+    return {
+      coins: clampNumber(parsed?.coins, 0, Number.MAX_SAFE_INTEGER, base.coins),
+      totalCoins: clampNumber(parsed?.totalCoins, 0, Number.MAX_SAFE_INTEGER, base.totalCoins),
+      totalBalls,
+      goldenBalls,
+      upgrades: normalizeUpgrades(parsed?.upgrades),
+      slotLevels: normalizeArray(parsed?.slotLevels, SLOT_COUNT, 1, 9999, 1),
+      slotFill: normalizeArray(parsed?.slotFill, SLOT_COUNT, 0, 999999, 0),
+      ownedSkins,
+      selectedSkin: normalizeSelectedSkin(parsed?.selectedSkin, ownedSkins),
+      soundOn: typeof parsed?.soundOn === 'boolean' ? parsed.soundOn : base.soundOn,
+      volume: clampNumber(parsed?.volume, 0, 1, base.volume),
+    }
+  } catch {
+    return base
+  }
 }
 
 function createProgressFromLeaderboardPlayer(player, currentProgress = defaultProgress()) {
@@ -443,7 +475,6 @@ function App() {
   const renderRef = useRef(null)
   const runnerRef = useRef(null)
   const audioRef = useRef(null)
-  const spawnIntervalRef = useRef(null)
   const holdDropIntervalRef = useRef(null)
   const gatekeeperBodiesRef = useRef([])
 
@@ -645,6 +676,14 @@ function App() {
     latestProgressRef.current = payload
     latestProgressHashRef.current = JSON.stringify(payload)
 
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(LOCAL_PROGRESS_STORAGE_KEY, JSON.stringify(payload))
+      } catch {
+        // Ignore local persistence failures.
+      }
+    }
+
     if (committedUsername) {
       hasUnsyncedRemoteProgressRef.current = createRemoteSyncHash(payload) !== lastRemoteSavedHashRef.current
     } else {
@@ -779,7 +818,6 @@ function App() {
       slotLevels,
       ownedSkins,
       selectedSkin,
-      ownerToken: leaderboardOwnerToken,
     }
 
     const payloadHash = createRemoteSyncHash(payload)
@@ -1024,15 +1062,7 @@ function App() {
         slotLevels: payload.slotLevels,
         ownedSkins: payload.ownedSkins,
         selectedSkin: payload.selectedSkin,
-        ownerToken: leaderboardOwnerToken,
       })
-
-      if (navigator.sendBeacon) {
-        const blob = new Blob([requestBody], { type: 'application/json' })
-        const queued = navigator.sendBeacon(apiUrl('/api/leaderboard/submit'), blob)
-        console.log('[progress] pagehide sync attempt via sendBeacon', { queued })
-        return
-      }
 
       fetch(apiUrl('/api/leaderboard/submit'), {
         method: 'POST',
@@ -1136,14 +1166,16 @@ function App() {
 
   const dropBallWave = useCallback(() => {
     const count = stateRef.current.upgrades.ballsPerDrop
+    const currentActiveBalls = stateRef.current.activeBalls
+    const currentTotalBalls = stateRef.current.totalBalls
     let spawned = 0
     for (let i = 0; i < count; i += 1) {
-      if (activeBalls + spawned >= totalBalls) break
+      if (currentActiveBalls + spawned >= currentTotalBalls) break
       const delay = spawned * 70
       spawned += 1
       window.setTimeout(() => spawnBall(1 + i * 0.1), delay)
     }
-  }, [spawnBall, activeBalls, totalBalls])
+  }, [spawnBall])
 
   const stopHoldDrop = useCallback(() => {
     if (holdDropIntervalRef.current) {
@@ -1199,8 +1231,6 @@ function App() {
     }
 
     audioRef.current = createAudioEngine()
-    audioRef.current?.setVolume(soundOn ? volume : 0)
-
     const width = Math.min(800, Math.max(500, boardWrapRef.current.clientWidth))
     const height = 700
     const slotAreaTop = height - 168
@@ -1292,7 +1322,7 @@ function App() {
       Matter.World.add(engine.world, initialGatekeepers)
     }
 
-    Matter.Events.on(engine, 'collisionStart', (event) => {
+    const handleCollisionStart = (event) => {
       for (const pair of event.pairs) {
         const labels = [pair.bodyA.label, pair.bodyB.label]
         const ballBody = labels[0] === 'ball' ? pair.bodyA : labels[1] === 'ball' ? pair.bodyB : null
@@ -1356,23 +1386,22 @@ function App() {
 
           setSlotFill((previous) => {
             const next = [...previous]
-            next[slotIndex] += 1
-            return next
-          })
+            const currentLevel = stateRef.current.slotLevels[slotIndex]
+            const threshold = 7 + currentLevel * 4
+            const nextFill = previous[slotIndex] + 1
 
-          setSlotLevels((previous) => {
-            const next = [...previous]
-            const threshold = 7 + previous[slotIndex] * 4
-            const currentFill = stateRef.current.slotFill[slotIndex] + 1
-            if (currentFill >= threshold) {
-              next[slotIndex] += 1
-              addFloater(((slotIndex + 0.5) * slotWidth * 100) / width, 87, `Slot ${slotIndex + 1} UP`, 'upgrade')
-              setSlotFill((fills) => {
-                const copy = [...fills]
-                copy[slotIndex] = 0
-                return copy
+            if (nextFill >= threshold) {
+              next[slotIndex] = 0
+              setSlotLevels((levels) => {
+                const leveled = [...levels]
+                leveled[slotIndex] += 1
+                return leveled
               })
+              addFloater(((slotIndex + 0.5) * slotWidth * 100) / width, 87, `Slot ${slotIndex + 1} UP`, 'upgrade')
+              return next
             }
+
+            next[slotIndex] = nextFill
             return next
           })
 
@@ -1384,7 +1413,9 @@ function App() {
           window.setTimeout(() => setBoardShake(false), 160)
         }
       }
-    })
+    }
+
+    Matter.Events.on(engine, 'collisionStart', handleCollisionStart)
 
     const runner = Matter.Runner.create()
     runnerRef.current = runner
@@ -1562,15 +1593,13 @@ function App() {
     window.addEventListener('resize', resize)
 
     return () => {
-      if (spawnIntervalRef.current) {
-        window.clearInterval(spawnIntervalRef.current)
-      }
       window.clearInterval(cleanupInterval)
       stopHoldDrop()
       window.removeEventListener('resize', resize)
       Matter.Events.off(render, 'afterRender', drawSkinOverlays)
-        Matter.Events.off(engine, 'beforeUpdate', moveGatekeepers)
-        gatekeeperBodiesRef.current = []
+      Matter.Events.off(engine, 'beforeUpdate', moveGatekeepers)
+      Matter.Events.off(engine, 'collisionStart', handleCollisionStart)
+      gatekeeperBodiesRef.current = []
       Matter.Render.stop(render)
       Matter.Runner.stop(runner)
       Matter.World.clear(engine.world, false)
