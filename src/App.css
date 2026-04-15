@@ -742,19 +742,19 @@
 
 .leaderboard-submit-row button:disabled {
   opacity: 0.45;
-
-  .leaderboard-change-btn {
-    border: 2px solid #2a4669 !important;
-    background: #10151f !important;
-    color: #7aaed4 !important;
-    white-space: nowrap;
-  }
-
-  .leaderboard-change-btn:hover:not(:disabled) {
-    background: #1b2b45 !important;
-    color: #acd4ff !important;
-  }
   cursor: not-allowed;
+}
+
+.leaderboard-change-btn {
+  border: 2px solid #2a4669 !important;
+  background: #10151f !important;
+  color: #7aaed4 !important;
+  white-space: nowrap;
+}
+
+.leaderboard-change-btn:hover:not(:disabled) {
+  background: #1b2b45 !important;
+  color: #acd4ff !important;
 }
 
 .leaderboard-status {
@@ -932,6 +932,261 @@
   color: #aac8ff;
 }
 
+.clan-home-shortcut {
+  width: auto;
+  padding: 0 10px;
+  font-size: 1rem;
+}
+
+.clans-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.clans-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.clans-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.clan-search-input,
+.clan-form-grid input,
+.clan-form-grid textarea,
+.clan-form-grid select,
+.clan-chat-compose input {
+  border: 2px solid #2a4669;
+  background: #080a11;
+  color: #dceeff;
+  font: 400 1rem/1.2 'VT323', monospace;
+  padding: 6px 8px;
+}
+
+.clan-search-input {
+  width: min(300px, 100%);
+}
+
+.clan-panel-card,
+.clan-home-card,
+.clan-row {
+  border: 2px solid #1e3a5f;
+  background: #10151f;
+  padding: 10px;
+}
+
+.clan-form-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.clan-form-grid label {
+  display: grid;
+  gap: 4px;
+  font: 400 1rem/1.2 'VT323', monospace;
+  color: #aac8ff;
+}
+
+.clan-form-grid textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+.clan-form-actions {
+  margin-top: 10px;
+}
+
+.clan-leaderboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 540px;
+  overflow: auto;
+}
+
+.clan-row {
+  display: grid;
+  grid-template-columns: 56px 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.clan-row:hover {
+  border-color: #57d5ff;
+}
+
+.clan-rank {
+  color: #aac8ff;
+  font: 400 1.2rem/1 'VT323', monospace;
+}
+
+.clan-icon {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border: 2px solid #2a4669;
+}
+
+.clan-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.clan-meta strong {
+  color: #dceeff;
+  font: 400 1.2rem/1 'VT323', monospace;
+}
+
+.clan-meta span,
+.clan-meta small {
+  color: #728eb1;
+  font: 400 1rem/1.2 'VT323', monospace;
+}
+
+.clan-hover-join-btn {
+  border: 2px solid #00ff41;
+  background: #0b160d;
+  color: #00ff41;
+  font: 400 1rem/1 'VT323', monospace;
+  padding: 6px 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.clan-row:hover .clan-hover-join-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.clan-hover-join-btn:disabled {
+  opacity: 0.35 !important;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.clan-join-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.clan-join-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #2a4669;
+  padding: 8px;
+}
+
+.clan-join-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.clan-join-meta strong {
+  color: #dceeff;
+  font: 400 1.2rem/1 'VT323', monospace;
+}
+
+.clan-join-meta span {
+  color: #728eb1;
+  font: 400 0.95rem/1.2 'VT323', monospace;
+}
+
+.clan-war-timeline {
+  border: 1px solid #2a4669;
+  background: #0c1220;
+  padding: 10px;
+  display: grid;
+  gap: 5px;
+}
+
+.clan-war-timeline h3 {
+  margin: 0;
+  color: #ddeeff;
+  font: 400 0.86rem/1.3 'Press Start 2P', monospace;
+}
+
+.clan-war-timeline p {
+  margin: 0;
+  color: #89a8cf;
+  font: 400 1rem/1.2 'VT323', monospace;
+}
+
+.clan-home-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.clan-chat-panel,
+.clan-war-board {
+  border: 1px solid #2a4669;
+  background: #0c1220;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.clan-chat-panel h4,
+.clan-war-board h4 {
+  margin: 0;
+  color: #ddeeff;
+  font: 400 0.75rem/1.3 'Press Start 2P', monospace;
+}
+
+.clan-chat-list {
+  max-height: 280px;
+  overflow: auto;
+  display: grid;
+  gap: 5px;
+}
+
+.clan-chat-line {
+  display: grid;
+  gap: 1px;
+  border-bottom: 1px solid #213754;
+  padding-bottom: 4px;
+}
+
+.clan-chat-line strong {
+  color: #9be8b4;
+  font: 400 1rem/1 'VT323', monospace;
+}
+
+.clan-chat-line span {
+  color: #dceeff;
+  font: 400 1rem/1.2 'VT323', monospace;
+}
+
+.clan-chat-compose {
+  display: flex;
+  gap: 8px;
+}
+
+.clan-war-list {
+  display: grid;
+  gap: 6px;
+}
+
+.clan-war-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 8px;
+  color: #aac8ff;
+  font: 400 1rem/1.1 'VT323', monospace;
+}
+
 @keyframes boardShake {
   0% {
     transform: translateX(0);
@@ -1075,4 +1330,242 @@
     grid-column: 1 / -1;
     justify-self: start;
   }
+
+  .clan-row {
+    grid-template-columns: 50px 40px minmax(0, 1fr);
+  }
+
+  .clan-hover-join-btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .clan-home-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .clan-chat-compose {
+    flex-direction: column;
+  }
+}
+
+/* ── Invite inbox icon ── */
+.clan-invite-icon {
+  position: relative;
+  width: auto;
+  padding: 0 10px;
+  font-size: 1.1rem;
+}
+
+.clan-invite-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ff4444;
+  color: #fff;
+  font: 700 0.65rem/1 sans-serif;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  pointer-events: none;
+}
+
+.clan-invite-inbox {
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  z-index: 300;
+  background: #111827;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 280px;
+  max-width: 360px;
+  box-shadow: 0 4px 20px #0008;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.clan-invite-inbox-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 700 1.1rem/1 'VT323', monospace;
+  color: #aac8ff;
+}
+
+.clan-invite-close {
+  background: none;
+  border: none;
+  color: #aac8ff;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.clan-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.clan-invite-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.clan-invite-name {
+  font: 700 1rem/1 'VT323', monospace;
+  color: #e0e8ff;
+}
+
+.clan-invite-by {
+  font: 400 0.8rem/1 'VT323', monospace;
+  color: #7a9acc;
+}
+
+/* ── Clan home actions bar ── */
+.clan-home-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.clan-settings-btn {
+  background: #1d4ed8;
+}
+
+.clan-leave-btn {
+  background: #b91c1c;
+}
+
+.clan-leave-btn:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+/* ── Owner settings panel ── */
+.clan-owner-settings {
+  background: #0d1a2e;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.clan-owner-settings h4 {
+  margin: 0;
+  font: 700 1.3rem/1 'VT323', monospace;
+  color: #aac8ff;
+}
+
+.clan-settings-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: 400 0.95rem/1 'VT323', monospace;
+  color: #aac8ff;
+}
+
+.clan-settings-label input,
+.clan-settings-label select {
+  background: #1a2744;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  color: #e0e8ff;
+  font: 400 1rem/1 'VT323', monospace;
+  padding: 6px 8px;
+}
+
+.clan-invite-section {
+  border-top: 1px solid #2563eb44;
+  padding-top: 10px;
+}
+
+.clan-invite-section h5 {
+  margin: 0 0 8px;
+  font: 700 1.1rem/1 'VT323', monospace;
+  color: #aac8ff;
+}
+
+.clan-invite-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.clan-invite-form input {
+  flex: 1;
+  min-width: 140px;
+  background: #1a2744;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  color: #e0e8ff;
+  font: 400 1rem/1 'VT323', monospace;
+  padding: 6px 8px;
+}
+
+/* ── Member list ── */
+.clan-member-list {
+  margin-top: 12px;
+  padding: 12px;
+  background: #0d1a2e;
+  border: 1px solid #2563eb44;
+  border-radius: 8px;
+}
+
+.clan-member-list h4 {
+  margin: 0 0 8px;
+  font: 700 1.2rem/1 'VT323', monospace;
+  color: #aac8ff;
+}
+
+.clan-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid #2563eb22;
+}
+
+.clan-member-row:last-child {
+  border-bottom: none;
+}
+
+.clan-member-name {
+  font: 400 1rem/1 'VT323', monospace;
+  color: #e0e8ff;
+}
+
+.clan-owner-tag {
+  font-size: 0.9rem;
+}
+
+.clan-kick-btn {
+  background: #7f1d1d;
+  color: #fca5a5;
+  border: 1px solid #b91c1c;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font: 400 0.9rem/1.4 'VT323', monospace;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.clan-kick-btn:hover {
+  background: #b91c1c;
+  color: #fff;
 }

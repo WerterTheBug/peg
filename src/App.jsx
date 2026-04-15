@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Matter from 'matter-js'
+import { io } from 'socket.io-client'
 import './App.css'
 
 const SLOT_COUNT = 9
@@ -130,7 +131,26 @@ const LEADERBOARD_LIMIT = 50
 const LEADERBOARD_REFRESH_MS = 10000
 const PROGRESS_SYNC_MS = 5000
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
+const REALTIME_BASE_URL = API_BASE_URL || 'http://localhost:3001'
 const ADMIN_USERNAME = 'REAL buy btf'
+const CLAN_REFRESH_MS = 12000
+const CLAN_CHAT_LIMIT = 120
+
+function formatDuration(ms) {
+  const clamped = Math.max(0, Number(ms) || 0)
+  const totalSeconds = Math.floor(clamped / 1000)
+  const days = Math.floor(totalSeconds / 86400)
+  const hours = Math.floor((totalSeconds % 86400) / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+
+  if (days > 0) {
+    return `${days}d ${hours}h ${minutes}m`
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`
+  }
+  return `${minutes}m`
+}
 
 function generateOwnerToken() {
   if (typeof window === 'undefined' || !window.crypto?.getRandomValues) {
@@ -477,6 +497,7 @@ function App() {
   const audioRef = useRef(null)
   const holdDropIntervalRef = useRef(null)
   const gatekeeperBodiesRef = useRef([])
+  const clanSocketRef = useRef(null)
 
   const initialProgress = useMemo(() => loadProgress(), [])
 
@@ -491,6 +512,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showUpdateAlert, setShowUpdateAlert] = useState(false)
   const [mainTab, setMainTab] = useState('game')
+  const [clanView, setClanView] = useState('main')
   const [shopTab, setShopTab] = useState('upgrades')
   const [leaderboardEntries, setLeaderboardEntries] = useState([])
   const [leaderboardLoading, setLeaderboardLoading] = useState(false)
@@ -501,6 +523,32 @@ function App() {
   const [leaderboardLastSyncAt, setLeaderboardLastSyncAt] = useState(null)
   const [leaderboardLastSyncOk, setLeaderboardLastSyncOk] = useState(null)
   const [selectedLeaderboardPlayer, setSelectedLeaderboardPlayer] = useState(null)
+  const [clansEntries, setClansEntries] = useState([])
+  const [warLeaderboardEntries, setWarLeaderboardEntries] = useState([])
+  const [clansLoading, setClansLoading] = useState(false)
+  const [clansError, setClansError] = useState('')
+  const [clansStatus, setClansStatus] = useState('')
+  const [clanSearchTerm, setClanSearchTerm] = useState('')
+  const [showInviteInbox, setShowInviteInbox] = useState(false)
+  const [clanInvites, setClanInvites] = useState([])
+  const [showCreateClan, setShowCreateClan] = useState(false)
+  const [showJoinClan, setShowJoinClan] = useState(false)
+  const [showOwnerClanSettings, setShowOwnerClanSettings] = useState(false)
+  const [createClanName, setCreateClanName] = useState('')
+  const [createClanDescription, setCreateClanDescription] = useState('')
+  const [createClanPermission, setCreateClanPermission] = useState('public')
+  const [createClanIcon, setCreateClanIcon] = useState(null)
+  const [ownerClanName, setOwnerClanName] = useState('')
+  const [ownerClanDescription, setOwnerClanDescription] = useState('')
+  const [ownerClanPermission, setOwnerClanPermission] = useState('public')
+  const [ownerClanIcon, setOwnerClanIcon] = useState(null)
+  const [inviteUsername, setInviteUsername] = useState('')
+  const [myClan, setMyClan] = useState(null)
+  const [clanHome, setClanHome] = useState(null)
+  const [clanChatMessages, setClanChatMessages] = useState([])
+  const [clanChatText, setClanChatText] = useState('')
+  const [clanChatSending, setClanChatSending] = useState(false)
+  const [clanNotice, setClanNotice] = useState('')
   const [leaderboardUsername, setLeaderboardUsername] = useState(() => {
     if (typeof window === 'undefined') {
       return ''
@@ -709,6 +757,21 @@ function App() {
       // Ignore username storage failures.
     }
   }, [leaderboardUsername])
+
+  useEffect(() => {
+    if (committedUsername) {
+      return
+    }
+
+    setClanInvites([])
+    setShowInviteInbox(false)
+    setShowOwnerClanSettings(false)
+    setMyClan(null)
+    setClanHome(null)
+    setClanChatMessages([])
+    setClanView('main')
+    setClanNotice('')
+  }, [committedUsername])
 
   const refreshLeaderboard = useCallback(async (reason = 'interval') => {
     const startedAt = Date.now()
@@ -1011,6 +1074,453 @@ function App() {
     }
     submitLeaderboardScore()
   }, [committedUsername, scheduleNextLeaderboardRefresh, submitLeaderboardScore, syncCommittedUserProgress])
+
+  const fetchClans = useCallback(async (search = '') => {
+    setClansLoading(true)
+    setClansError('')
+    try {
+      const query = new URLSearchParams({
+        limit: '60',
+        ...(search.trim() ? { search: search.trim() } : {}),
+      })
+      const response = await fetch(apiUrl(`/api/clans?${query.toString()}&t=${Date.now()}`), { cache: 'no-store' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : 'Could not load clans.')
+      }
+      setClansEntries(Array.isArray(data?.entries) ? data.entries : [])
+    } catch (error) {
+      setClansError(error instanceof Error ? error.message : 'Could not load clans.')
+    } finally {
+      setClansLoading(false)
+    }
+  }, [])
+
+  const fetchWarLeaderboard = useCallback(async () => {
+    try {
+      const response = await fetch(apiUrl(`/api/clans/war-leaderboard?t=${Date.now()}`), { cache: 'no-store' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : 'Could not load war leaderboard.')
+      }
+      setWarLeaderboardEntries(Array.isArray(data?.entries) ? data.entries : [])
+    } catch {
+      setWarLeaderboardEntries([])
+    }
+  }, [])
+
+  const fetchMyClan = useCallback(async () => {
+    const username = committedUsername.trim()
+    if (!username || !leaderboardOwnerToken) {
+      setMyClan(null)
+      return null
+    }
+
+    try {
+      const response = await fetch(apiUrl(`/api/clans/me?username=${encodeURIComponent(username)}&t=${Date.now()}`), {
+        headers: {
+          'x-player-token': leaderboardOwnerToken,
+        },
+        cache: 'no-store',
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : 'Could not load your clan.')
+      }
+
+      if (data?.hasClan && data?.clan) {
+        setMyClan(data.clan)
+      } else {
+        setMyClan(null)
+      }
+
+      if (data?.warNotification?.message) {
+        setClanNotice(data.warNotification.message)
+        await fetch(apiUrl('/api/clans/war/ack'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-player-token': leaderboardOwnerToken,
+          },
+          body: JSON.stringify({ username, cycleId: data.warNotification.cycleId }),
+        }).catch(() => undefined)
+      }
+
+      return data?.clan ?? null
+    } catch (error) {
+      setMyClan(null)
+      setClansError(error instanceof Error ? error.message : 'Could not load your clan.')
+      return null
+    }
+  }, [committedUsername, leaderboardOwnerToken])
+
+  const fetchClanHome = useCallback(async (clanKeyOverride) => {
+    const username = committedUsername.trim()
+    const clanKey = (clanKeyOverride ?? myClan?.key ?? '').trim()
+    if (!username || !clanKey || !leaderboardOwnerToken) {
+      return
+    }
+
+    try {
+      const [homeResponse, chatResponse] = await Promise.all([
+        fetch(
+          apiUrl(`/api/clans/${encodeURIComponent(clanKey)}/home?username=${encodeURIComponent(username)}&t=${Date.now()}`),
+          {
+            headers: { 'x-player-token': leaderboardOwnerToken },
+            cache: 'no-store',
+          },
+        ),
+        fetch(
+          apiUrl(`/api/clans/${encodeURIComponent(clanKey)}/chat?username=${encodeURIComponent(username)}&limit=${CLAN_CHAT_LIMIT}&t=${Date.now()}`),
+          {
+            headers: { 'x-player-token': leaderboardOwnerToken },
+            cache: 'no-store',
+          },
+        ),
+      ])
+
+      const homeData = await homeResponse.json().catch(() => ({}))
+      const chatData = await chatResponse.json().catch(() => ({}))
+      if (!homeResponse.ok) {
+        throw new Error(typeof homeData?.error === 'string' ? homeData.error : 'Could not load clan home.')
+      }
+      if (!chatResponse.ok) {
+        throw new Error(typeof chatData?.error === 'string' ? chatData.error : 'Could not load clan chat.')
+      }
+
+      setClanHome(homeData)
+      setClanChatMessages(Array.isArray(chatData?.entries) ? chatData.entries : [])
+      setClanView('home')
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not load clan home.')
+    }
+  }, [committedUsername, leaderboardOwnerToken, myClan?.key])
+
+  const createClan = useCallback(async () => {
+    const username = committedUsername.trim()
+    if (!username || !leaderboardOwnerToken) {
+      setClansStatus('Submit your leaderboard username first.')
+      return
+    }
+    if (!createClanIcon) {
+      setClansStatus('Clan icon image is required.')
+      return
+    }
+
+    const formData = new FormData()
+    formData.append('username', username)
+    formData.append('name', createClanName.trim())
+    formData.append('description', createClanDescription.trim())
+    formData.append('joinPermission', createClanPermission)
+    formData.append('icon', createClanIcon)
+
+    try {
+      const response = await fetch(apiUrl('/api/clans'), {
+        method: 'POST',
+        headers: {
+          'x-player-token': leaderboardOwnerToken,
+        },
+        body: formData,
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : 'Could not create clan.')
+      }
+
+      setClansStatus('Clan created!')
+      setShowCreateClan(false)
+      setCreateClanName('')
+      setCreateClanDescription('')
+      setCreateClanPermission('public')
+      setCreateClanIcon(null)
+      const refreshedClan = await fetchMyClan()
+      await fetchClans(clanSearchTerm)
+      await fetchWarLeaderboard()
+      if (refreshedClan?.key) {
+        await fetchClanHome(refreshedClan.key)
+      }
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not create clan.')
+    }
+  }, [clanSearchTerm, committedUsername, createClanDescription, createClanIcon, createClanName, createClanPermission, fetchClanHome, fetchClans, fetchMyClan, fetchWarLeaderboard, leaderboardOwnerToken])
+
+  const joinClan = useCallback(async (clanKey) => {
+    const username = committedUsername.trim()
+    if (!username || !leaderboardOwnerToken) {
+      setClansStatus('Submit your leaderboard username first.')
+      return
+    }
+
+    try {
+      const response = await fetch(apiUrl(`/api/clans/${encodeURIComponent(clanKey)}/join`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-player-token': leaderboardOwnerToken,
+        },
+        body: JSON.stringify({ username }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : 'Could not join clan.')
+      }
+
+      setClansStatus('Joined clan.')
+      setShowJoinClan(false)
+      const refreshedClan = await fetchMyClan()
+      await fetchClans(clanSearchTerm)
+      await fetchWarLeaderboard()
+      if (refreshedClan?.key) {
+        await fetchClanHome(refreshedClan.key)
+      }
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not join clan.')
+    }
+  }, [clanSearchTerm, committedUsername, fetchClanHome, fetchClans, fetchMyClan, fetchWarLeaderboard, leaderboardOwnerToken])
+
+  const sendClanChat = useCallback(async () => {
+    if (clanChatSending || !clanHome?.clan?.key) {
+      return
+    }
+
+    const username = committedUsername.trim()
+    const text = clanChatText.trim()
+    if (!username || !text || !leaderboardOwnerToken) {
+      return
+    }
+
+    setClanChatSending(true)
+    try {
+      const response = await fetch(apiUrl(`/api/clans/${encodeURIComponent(clanHome.clan.key)}/chat`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-player-token': leaderboardOwnerToken,
+        },
+        body: JSON.stringify({ username, message: text }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : 'Could not send message.')
+      }
+      setClanChatText('')
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not send message.')
+    } finally {
+      setClanChatSending(false)
+    }
+  }, [clanChatSending, clanChatText, clanHome?.clan?.key, committedUsername, leaderboardOwnerToken])
+
+  const fetchInvites = useCallback(async () => {
+    const username = committedUsername.trim()
+    if (!username || !leaderboardOwnerToken) return
+    try {
+      const response = await fetch(
+        apiUrl(`/api/clans/invites?username=${encodeURIComponent(username)}&t=${Date.now()}`),
+        { headers: { 'x-player-token': leaderboardOwnerToken }, cache: 'no-store' },
+      )
+      const data = await response.json().catch(() => ({}))
+      setClanInvites(Array.isArray(data?.entries) ? data.entries : [])
+    } catch {
+      setClanInvites([])
+    }
+  }, [committedUsername, leaderboardOwnerToken])
+
+  const saveClanSettings = useCallback(async () => {
+    const clanKey = clanHome?.clan?.key ?? myClan?.key ?? ''
+    const username = committedUsername.trim()
+    if (!clanKey || !username || !leaderboardOwnerToken) return
+
+    const formData = new FormData()
+    formData.append('username', username)
+    formData.append('name', ownerClanName.trim())
+    formData.append('description', ownerClanDescription.trim())
+    formData.append('joinPermission', ownerClanPermission)
+    if (ownerClanIcon) formData.append('icon', ownerClanIcon)
+
+    try {
+      const response = await fetch(apiUrl(`/api/clans/${encodeURIComponent(clanKey)}/settings`), {
+        method: 'POST',
+        headers: { 'x-player-token': leaderboardOwnerToken },
+        body: formData,
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Could not save settings.')
+
+      setClansStatus('Settings saved.')
+      setShowOwnerClanSettings(false)
+      setOwnerClanIcon(null)
+      const newKey = data.newClanKey ?? clanKey
+      await fetchMyClan()
+      await fetchClans(clanSearchTerm)
+      await fetchWarLeaderboard()
+      await fetchClanHome(newKey)
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not save settings.')
+    }
+  }, [clanHome?.clan?.key, clanSearchTerm, committedUsername, fetchClanHome, fetchClans, fetchMyClan, fetchWarLeaderboard, leaderboardOwnerToken, myClan?.key, ownerClanDescription, ownerClanIcon, ownerClanName, ownerClanPermission])
+
+  const sendInvite = useCallback(async () => {
+    const clanKey = clanHome?.clan?.key ?? myClan?.key ?? ''
+    const username = committedUsername.trim()
+    const target = inviteUsername.trim()
+    if (!clanKey || !username || !target || !leaderboardOwnerToken) return
+
+    try {
+      const response = await fetch(apiUrl(`/api/clans/${encodeURIComponent(clanKey)}/invites`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-player-token': leaderboardOwnerToken },
+        body: JSON.stringify({ username, targetUsername: target }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Could not send invite.')
+      setClansStatus(`Invited ${target} to the clan.`)
+      setInviteUsername('')
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not send invite.')
+    }
+  }, [clanHome?.clan?.key, committedUsername, inviteUsername, leaderboardOwnerToken, myClan?.key])
+
+  const kickMember = useCallback(async (targetUsername) => {
+    const clanKey = clanHome?.clan?.key ?? myClan?.key ?? ''
+    const username = committedUsername.trim()
+    if (!clanKey || !username || !targetUsername || !leaderboardOwnerToken) return
+
+    try {
+      const response = await fetch(apiUrl(`/api/clans/${encodeURIComponent(clanKey)}/kick`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-player-token': leaderboardOwnerToken },
+        body: JSON.stringify({ username, targetUsername }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Could not kick member.')
+      setClansStatus(`${targetUsername} was kicked.`)
+      await fetchClanHome(clanKey)
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not kick member.')
+    }
+  }, [clanHome?.clan?.key, committedUsername, fetchClanHome, leaderboardOwnerToken, myClan?.key])
+
+  const leaveClan = useCallback(async () => {
+    const clanKey = clanHome?.clan?.key ?? myClan?.key ?? ''
+    const username = committedUsername.trim()
+    if (!clanKey || !username || !leaderboardOwnerToken) return
+
+    try {
+      const response = await fetch(apiUrl(`/api/clans/${encodeURIComponent(clanKey)}/leave`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-player-token': leaderboardOwnerToken },
+        body: JSON.stringify({ username }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Could not leave clan.')
+
+      setClansStatus(data.disbanded ? 'Clan disbanded (no members left).' : 'You have left the clan.')
+      setMyClan(null)
+      setClanHome(null)
+      setClanView('main')
+      setShowOwnerClanSettings(false)
+      await fetchClans(clanSearchTerm)
+      await fetchWarLeaderboard()
+    } catch (error) {
+      setClansStatus(error instanceof Error ? error.message : 'Could not leave clan.')
+    }
+  }, [clanHome?.clan?.key, clanSearchTerm, committedUsername, fetchClans, fetchWarLeaderboard, leaderboardOwnerToken, myClan?.key])
+
+  useEffect(() => {
+    if (mainTab !== 'clans') {
+      return undefined
+    }
+
+    fetchClans(clanSearchTerm)
+    fetchWarLeaderboard()
+    fetchMyClan()
+    fetchInvites()
+
+    const refreshId = window.setInterval(() => {
+      fetchClans(clanSearchTerm)
+      fetchWarLeaderboard()
+      fetchMyClan()
+      fetchInvites()
+    }, CLAN_REFRESH_MS)
+
+    return () => {
+      window.clearInterval(refreshId)
+    }
+  }, [clanSearchTerm, fetchClans, fetchInvites, fetchMyClan, fetchWarLeaderboard, mainTab])
+
+  useEffect(() => {
+    if (clanView !== 'home' || !clanHome?.clan?.key || !committedUsername || !leaderboardOwnerToken) {
+      if (clanSocketRef.current) {
+        clanSocketRef.current.disconnect()
+        clanSocketRef.current = null
+      }
+      return undefined
+    }
+
+    const socket = io(REALTIME_BASE_URL, {
+      transports: ['websocket', 'polling'],
+      withCredentials: false,
+    })
+    clanSocketRef.current = socket
+
+    socket.emit('clan:join', {
+      clanKey: clanHome.clan.key,
+      username: committedUsername,
+      token: leaderboardOwnerToken,
+    })
+
+    const onMessage = (payload) => {
+      if (!payload || payload.clanKey !== clanHome.clan.key) {
+        return
+      }
+
+      setClanChatMessages((previous) => {
+        const exists = previous.some((entry) => entry.id === payload.id)
+        if (exists) {
+          return previous
+        }
+        const next = [...previous, payload]
+        return next.slice(-CLAN_CHAT_LIMIT)
+      })
+    }
+
+    socket.on('clan:message', onMessage)
+
+    return () => {
+      socket.off('clan:message', onMessage)
+      socket.disconnect()
+      if (clanSocketRef.current === socket) {
+        clanSocketRef.current = null
+      }
+    }
+  }, [clanHome?.clan?.key, clanView, committedUsername, leaderboardOwnerToken])
+
+  useEffect(() => {
+    if (clanView !== 'home' || !clanHome?.war?.isActive || !committedUsername || !leaderboardOwnerToken) {
+      return undefined
+    }
+
+    const submitWarProgress = () => {
+      fetch(apiUrl('/api/clans/war/progress'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-player-token': leaderboardOwnerToken,
+        },
+        body: JSON.stringify({
+          username: committedUsername,
+          totalCoins: Math.floor(totalCoins),
+        }),
+      }).catch(() => undefined)
+    }
+
+    submitWarProgress()
+    const intervalId = window.setInterval(submitWarProgress, 20_000)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [clanHome?.war?.isActive, clanView, committedUsername, leaderboardOwnerToken, totalCoins])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1744,6 +2254,13 @@ function App() {
       .map(([upgradeId, level]) => [upgradeTitleById[upgradeId] ?? upgradeId, level])
     : []
   const currentLeaderboardUsername = (committedUsername || leaderboardUsername).trim().toLowerCase()
+  const canUseClans = committedUsername.trim().length > 0
+  const filteredJoinableClans = clansEntries.filter((entry) =>
+    entry?.name?.toLowerCase().includes(clanSearchTerm.trim().toLowerCase()),
+  )
+  const clanTimelineLabel = clanHome?.war?.isActive
+    ? `Clan war live now • ends in ${formatDuration(clanHome?.war?.timeRemainingMs ?? 0)}`
+    : `Next clan war starts in ${formatDuration(clanHome?.war?.timeRemainingMs ?? 0)}`
 
   return (
     <main className="layout">
@@ -1782,6 +2299,13 @@ function App() {
                 aria-pressed={mainTab === 'leaderboard'}
               >
                 Leaderboard
+              </button>
+              <button
+                className={`main-nav-tab ${mainTab === 'clans' ? 'active' : ''}`}
+                onClick={() => setMainTab('clans')}
+                aria-pressed={mainTab === 'clans'}
+              >
+                Clans
               </button>
             </nav>
           </div>
@@ -1825,8 +2349,59 @@ function App() {
             >
               {showSettings ? '[X]' : '⚙'}
             </button>
+            {myClan?.key && (
+              <button
+                className="settings-btn clan-home-shortcut"
+                onClick={() => {
+                  setMainTab('clans')
+                  fetchClanHome(myClan.key)
+                }}
+                aria-label="Open clan home"
+                title="Clan Home"
+              >
+                Clan
+              </button>
+            )}
+            {canUseClans && clanInvites.length > 0 && (
+              <button
+                className="settings-btn clan-invite-icon"
+                onClick={() => setShowInviteInbox((v) => !v)}
+                aria-label={`You have ${clanInvites.length} clan invite${clanInvites.length !== 1 ? 's' : ''}`}
+                title="Clan Invites"
+              >
+                ✉
+                <span className="clan-invite-badge">{clanInvites.length}</span>
+              </button>
+            )}
           </div>
         </header>
+
+        {showInviteInbox && clanInvites.length > 0 && (
+          <div className="clan-invite-inbox">
+            <div className="clan-invite-inbox-header">
+              <strong>Clan Invites</strong>
+              <button className="clan-invite-close" onClick={() => setShowInviteInbox(false)}>✕</button>
+            </div>
+            {clanInvites.map((invite) => (
+              <div className="clan-invite-row" key={invite.clanKey}>
+                <div className="clan-invite-info">
+                  <span className="clan-invite-name">{invite.clanName}</span>
+                  {invite.invitedBy && <span className="clan-invite-by">from {invite.invitedBy}</span>}
+                </div>
+                <button
+                  className="drop-button"
+                  disabled={!!myClan}
+                  onClick={async () => {
+                    await joinClan(invite.clanKey)
+                    await fetchInvites()
+                  }}
+                >
+                  {myClan ? 'Leave your clan first' : 'Join'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {showSettings && (
           <div className="settings-panel">
@@ -1905,7 +2480,7 @@ function App() {
               </div>
             </div>
           </>
-        ) : (
+        ) : mainTab === 'leaderboard' ? (
           <section className="leaderboard-main" aria-label="Leaderboard panel">
             <div className="leaderboard-submit">
               <label htmlFor="leaderboard-username">Username</label>
@@ -2027,6 +2602,319 @@ function App() {
                 ? ` • Last sync ${leaderboardLastSyncOk ? 'ok' : 'failed'} at ${new Date(leaderboardLastSyncAt).toLocaleTimeString()}`
                 : ''}
             </p>
+          </section>
+        ) : (
+          <section className="clans-main" aria-label="Clans panel">
+            <div className="clans-toolbar">
+              <div className="clans-actions">
+                <button
+                  className="drop-button"
+                  disabled={!canUseClans || !!myClan}
+                  onClick={() => {
+                    setShowCreateClan((value) => !value)
+                    setShowJoinClan(false)
+                  }}
+                >
+                  Create Clan
+                </button>
+                <button
+                  className="drop-button"
+                  disabled={!canUseClans || !!myClan}
+                  onClick={() => {
+                    setShowJoinClan((value) => !value)
+                    setShowCreateClan(false)
+                  }}
+                >
+                  Join a Clan
+                </button>
+                {myClan?.key && (
+                  <button
+                    className="drop-button"
+                    onClick={() => {
+                      fetchClanHome(myClan.key)
+                    }}
+                  >
+                    Clan Home
+                  </button>
+                )}
+              </div>
+              <input
+                className="clan-search-input"
+                type="text"
+                value={clanSearchTerm}
+                onChange={(event) => setClanSearchTerm(event.target.value)}
+                placeholder="Search clans by name"
+                maxLength={24}
+              />
+            </div>
+
+            {!canUseClans && (
+              <p className="leaderboard-status error">Submit your leaderboard username first to create or join clans.</p>
+            )}
+
+            {clanNotice && <p className="leaderboard-status">{clanNotice}</p>}
+            {clansStatus && <p className="leaderboard-status">{clansStatus}</p>}
+            {clansError && <p className="leaderboard-status error">{clansError}</p>}
+
+            {showCreateClan && (
+              <article className="clan-panel-card">
+                <h3>Create Clan</h3>
+                <div className="clan-form-grid">
+                  <label>
+                    Clan name
+                    <input
+                      type="text"
+                      value={createClanName}
+                      onChange={(event) => setCreateClanName(event.target.value)}
+                      maxLength={24}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Description (max 200)
+                    <textarea
+                      value={createClanDescription}
+                      onChange={(event) => setCreateClanDescription(event.target.value)}
+                      maxLength={200}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Join permission
+                    <select
+                      value={createClanPermission}
+                      onChange={(event) => setCreateClanPermission(event.target.value)}
+                      required
+                    >
+                      <option value="public">Public</option>
+                      <option value="private">Private</option>
+                    </select>
+                  </label>
+                  <label>
+                    Clan icon
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => setCreateClanIcon(event.target.files?.[0] ?? null)}
+                      required
+                    />
+                  </label>
+                </div>
+                <div className="clan-form-actions">
+                  <button
+                    className="drop-button"
+                    onClick={createClan}
+                    disabled={!createClanName.trim() || !createClanDescription.trim() || !createClanPermission || !createClanIcon}
+                  >
+                    Confirm Create
+                  </button>
+                </div>
+              </article>
+            )}
+
+            {showJoinClan && (
+              <article className="clan-panel-card">
+                <h3>Join a Clan</h3>
+                <p className="sidebar-note">Only public clans are directly joinable.</p>
+                <div className="clan-join-list">
+                  {filteredJoinableClans.map((clan) => (
+                    <div key={clan.key} className="clan-join-row">
+                      <div className="clan-join-meta">
+                        <strong>{clan.name}</strong>
+                        <span>{clan.memberCount} members • {clan.score.toLocaleString()} score</span>
+                      </div>
+                      <button
+                        className="drop-button"
+                        disabled={clan.joinPermission !== 'public' || !!myClan}
+                        onClick={() => joinClan(clan.key)}
+                      >
+                        {clan.joinPermission === 'public' ? 'Join' : 'Private'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            )}
+
+            {clanView === 'home' && clanHome?.clan ? (
+              <article className="clan-home-card">
+                <div className="clan-war-timeline">
+                  <h3>{clanHome.clan.name} Home</h3>
+                  <p>{clanTimelineLabel}</p>
+                  {clanHome.war?.opponent ? (
+                    <p>
+                      Matchup: {clanHome.clan.name} vs {clanHome.war.opponent.name} • {clanHome.war.myClanGain?.toLocaleString() ?? 0} vs {clanHome.war.opponentGain?.toLocaleString() ?? 0}
+                    </p>
+                  ) : (
+                    <p>No opponent assigned this cycle.</p>
+                  )}
+                  <div className="clan-home-actions">
+                    {clanHome.clan.ownerUsername === committedUsername && (
+                      <button
+                        className="drop-button clan-settings-btn"
+                        onClick={() => {
+                          setOwnerClanName(clanHome.clan.name)
+                          setOwnerClanDescription(clanHome.clan.description ?? '')
+                          setOwnerClanPermission(clanHome.clan.joinPermission ?? 'public')
+                          setOwnerClanIcon(null)
+                          setInviteUsername('')
+                          setShowOwnerClanSettings((v) => !v)
+                        }}
+                      >
+                        ⚙ Settings
+                      </button>
+                    )}
+                    <button className="drop-button clan-leave-btn" onClick={leaveClan}>
+                      Leave Clan
+                    </button>
+                  </div>
+                </div>
+
+                {showOwnerClanSettings && clanHome.clan.ownerUsername === committedUsername && (
+                  <div className="clan-owner-settings">
+                    <h4>Clan Settings</h4>
+                    <label className="clan-settings-label">
+                      Clan Name
+                      <input
+                        type="text"
+                        value={ownerClanName}
+                        onChange={(e) => setOwnerClanName(e.target.value)}
+                        maxLength={32}
+                      />
+                    </label>
+                    <label className="clan-settings-label">
+                      Description
+                      <input
+                        type="text"
+                        value={ownerClanDescription}
+                        onChange={(e) => setOwnerClanDescription(e.target.value)}
+                        maxLength={120}
+                      />
+                    </label>
+                    <label className="clan-settings-label">
+                      Join Permission
+                      <select value={ownerClanPermission} onChange={(e) => setOwnerClanPermission(e.target.value)}>
+                        <option value="public">Public</option>
+                        <option value="private">Private (invite only)</option>
+                      </select>
+                    </label>
+                    <label className="clan-settings-label">
+                      Clan Icon (optional)
+                      <input type="file" accept="image/*" onChange={(e) => setOwnerClanIcon(e.target.files?.[0] ?? null)} />
+                    </label>
+                    <button className="drop-button" onClick={saveClanSettings} disabled={!ownerClanName.trim()}>
+                      Save Settings
+                    </button>
+                    {ownerClanPermission === 'private' && (
+                      <div className="clan-invite-section">
+                        <h5>Invite a Player</h5>
+                        <div className="clan-invite-form">
+                          <input
+                            type="text"
+                            placeholder="Username to invite"
+                            value={inviteUsername}
+                            onChange={(e) => setInviteUsername(e.target.value)}
+                            maxLength={32}
+                          />
+                          <button className="drop-button" onClick={sendInvite} disabled={!inviteUsername.trim()}>
+                            Send Invite
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="clan-home-grid">
+                  <section className="clan-chat-panel">
+                    <h4>Clan Chat</h4>
+                    <div className="clan-chat-list">
+                      {clanChatMessages.map((message) => (
+                        <div key={message.id} className="clan-chat-line">
+                          <strong>{message.username}</strong>
+                          <span>{message.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="clan-chat-compose">
+                      <input
+                        type="text"
+                        value={clanChatText}
+                        onChange={(event) => setClanChatText(event.target.value)}
+                        placeholder="Type a clan message"
+                        maxLength={280}
+                      />
+                      <button className="drop-button" onClick={sendClanChat} disabled={clanChatSending || !clanChatText.trim()}>
+                        Send
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="clan-war-board">
+                    <h4>Clan War Wins Leaderboard</h4>
+                    <div className="clan-war-list">
+                      {(clanHome?.warLeaderboard ?? warLeaderboardEntries).map((entry) => (
+                        <div key={entry.key} className="clan-war-row">
+                          <span>#{entry.rank}</span>
+                          <span>{entry.name}</span>
+                          <strong>{entry.totalWarWins} wins</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+
+                {clanHome.clan.members?.length > 0 && (
+                  <section className="clan-member-list">
+                    <h4>Members</h4>
+                    {clanHome.clan.members.map((member) => (
+                      <div key={member.usernameKey} className="clan-member-row">
+                        <span className="clan-member-name">
+                          {member.username}
+                          {member.usernameKey === clanHome.clan.ownerUsernameKey && (
+                            <span className="clan-owner-tag"> 👑</span>
+                          )}
+                        </span>
+                        {clanHome.clan.ownerUsername === committedUsername &&
+                          member.usernameKey !== clanHome.clan.ownerUsernameKey && (
+                            <button
+                              className="clan-kick-btn"
+                              onClick={() => kickMember(member.username)}
+                            >
+                              Kick
+                            </button>
+                          )}
+                      </div>
+                    ))}
+                  </section>
+                )}
+              </article>
+            ) : (
+              <div className="clan-leaderboard-list" role="list">
+                {clansLoading && clansEntries.length === 0 ? (
+                  <p className="sidebar-note">Loading clans...</p>
+                ) : (
+                  clansEntries.map((clan) => (
+                    <article key={clan.key} className="clan-row" role="listitem">
+                      <div className="clan-rank">#{clan.rank}</div>
+                      <img src={clan.iconUrl} alt={`${clan.name} icon`} className="clan-icon" />
+                      <div className="clan-meta">
+                        <strong>{clan.name}</strong>
+                        <span>{clan.description}</span>
+                        <small>{clan.memberCount} members • {clan.totalWarWins} war wins • {clan.score.toLocaleString()} score</small>
+                      </div>
+                      <button
+                        className="clan-hover-join-btn"
+                        disabled={clan.joinPermission !== 'public' || !!myClan || !canUseClans}
+                        onClick={() => joinClan(clan.key)}
+                      >
+                        {clan.joinPermission === 'public' ? 'Join' : 'Private'}
+                      </button>
+                    </article>
+                  ))
+                )}
+              </div>
+            )}
           </section>
         )}
       </section>

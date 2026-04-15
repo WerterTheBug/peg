@@ -9,6 +9,9 @@ Retro roguelike browser-based Plinko built with React, Vite, and Matter.js physi
 - Slot progression and payout growth over time.
 - Toggleable settings panel with sound on/off and volume slider.
 - Main nav tabs for `Play` and `Leaderboard` views.
+- New `Clans` tab with create/join flows, clan leaderboard, and clan home.
+- Real-time clan chat (Socket.IO) scoped to clan membership.
+- Clan war timeline with bi-weekly cycle and 3-day active war window.
 - Persistent Node.js global leaderboard (file-backed) with top-3 badges and player profile inspection.
 - Retro pixel-inspired UI and animated reward floaters.
 
@@ -17,6 +20,8 @@ Retro roguelike browser-based Plinko built with React, Vite, and Matter.js physi
 - React 19
 - Vite 8
 - Matter.js
+- Socket.IO
+- Express + Mongoose (MongoDB for clans)
 
 ## Getting Started
 
@@ -92,7 +97,9 @@ If the backend is deployed on Render, Railway, Fly.io, or similar, set the same 
 
 ### Global Persistent Mode (MongoDB Atlas)
 
-To make the leaderboard persistent globally (shared by all users and not tied to one local machine), run the server with a hosted MongoDB database:
+To make the leaderboard persistent globally (shared by all users and not tied to one local machine), run the server with a hosted MongoDB database.
+
+Important for clans: Clan APIs require MongoDB mode (`MONGODB_URI` must be set). If MongoDB is not configured, leaderboard works in file mode but clans are disabled.
 
 1. Create a MongoDB Atlas cluster and database user.
 2. Add your app host/IP to Atlas network access.
@@ -171,6 +178,50 @@ Base URL (dev): `http://localhost:3001`
 - `GET /api/leaderboard?limit=50` - ranked entries by coins
 - `GET /api/leaderboard/:username` - single player profile and rank
 - `POST /api/leaderboard/submit` - create/update a player entry
+
+## Clans API
+
+All clan mutation/read endpoints require:
+
+- A valid leaderboard username (`username` query/body field)
+- `x-player-token` header (same token used for leaderboard ownership)
+
+Main endpoints:
+
+- `GET /api/clans?limit=60&search=name` - clan leaderboard/search by score
+- `GET /api/clans/war-leaderboard` - leaderboard ranked by clan war wins
+- `GET /api/clans/me?username=...` - current player's clan + war notification state
+- `POST /api/clans` - create clan (multipart form: `name`, `description`, `joinPermission`, `icon`, `username`)
+- `POST /api/clans/:clanKey/join` - join public clan
+- `GET /api/clans/:clanKey/home?username=...` - clan home, war state, and war leaderboard snapshot
+- `GET /api/clans/:clanKey/chat?username=...&limit=120` - clan chat history
+- `POST /api/clans/:clanKey/chat` - send chat message
+- `POST /api/clans/war/progress` - submit member totalCoins during active war
+- `POST /api/clans/war/ack` - acknowledge clan war notification
+
+Socket.IO events:
+
+- Client emits `clan:join` with `{ clanKey, username, token }`
+- Server emits `clan:message` for real-time chat updates
+
+## Render Deployment Notes For Clans
+
+If you are deploying backend on Render and frontend separately (Netlify/Vercel/etc), set these manually:
+
+1. `MONGODB_URI`: MongoDB Atlas connection string
+2. `CORS_ORIGINS`: comma-separated frontend origins, e.g. `https://your-frontend.com,https://www.your-frontend.com`
+3. Optional safety toggles: `READ_ONLY_MODE`, `EMERGENCY_SHUTDOWN`
+
+Required backend dependencies were added:
+
+- `socket.io`
+- `multer`
+
+Frontend dependency added:
+
+- `socket.io-client`
+
+Because clan icons are uploaded, icons are currently stored as base64 data URLs in MongoDB for portability on Render's ephemeral filesystem.
 
 Submission ownership protection:
 
