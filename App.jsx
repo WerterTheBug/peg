@@ -1586,10 +1586,14 @@ function App() {
 
     const resize = () => {
       const newWidth = Math.min(800, Math.max(500, boardWrapRef.current?.clientWidth ?? 700))
-      render.canvas.width = newWidth
-      render.options.width = newWidth
+      // Keep the Matter.js world and internal render size fixed. Only scale the
+      // displayed canvas so walls/pegs/sensors/slot math/cleanup stay aligned.
+      render.canvas.style.width = `${newWidth}px`
+      render.canvas.style.maxWidth = '100%'
+      render.canvas.style.height = 'auto'
     }
     window.addEventListener('resize', resize)
+    resize()
 
     return () => {
       if (spawnIntervalRef.current) {
