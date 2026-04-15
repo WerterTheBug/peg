@@ -7,6 +7,7 @@
     "dev": "vite",
     "server": "npm --prefix server start",
     "server:install": "npm --prefix server install",
+    "postinstall": "npm --prefix server install",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
