@@ -386,8 +386,8 @@ function loadProgress() {
     const goldenBalls = clampNumber(parsed?.goldenBalls, 0, totalBalls, base.goldenBalls)
 
     return {
-      coins: clampNumber(parsed?.coins, 0, Number.POSITIVE_INFINITY, base.coins),
-      totalCoins: clampNumber(parsed?.totalCoins, 0, Number.POSITIVE_INFINITY, base.totalCoins),
+      coins: clampNumber(parsed?.coins, 0, Number.MAX_SAFE_INTEGER, base.coins),
+      totalCoins: clampNumber(parsed?.totalCoins, 0, Number.MAX_SAFE_INTEGER, base.totalCoins),
       totalBalls,
       goldenBalls,
       upgrades: normalizeUpgrades(parsed?.upgrades),
