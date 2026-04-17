@@ -132,7 +132,7 @@ const LEADERBOARD_REFRESH_MS = 10000
 const PROGRESS_SYNC_MS = 5000
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
 const REALTIME_BASE_URL = API_BASE_URL || 'http://localhost:3001'
-const ADMIN_USERNAME = 'REAL buy btf'
+const ADMIN_USERNAME = 'lawrence main'
 const CLAN_REFRESH_MS = 12000
 const CLAN_CHAT_LIMIT = 120
 
@@ -995,18 +995,45 @@ function App() {
       return committedUsername.trim()
     }
 
+    try {
+      const storedCommitted = (window.localStorage.getItem(LEADERBOARD_COMMITTED_USERNAME_KEY) ?? '').trim()
+      if (storedCommitted && storedCommitted.toLowerCase() === username.toLowerCase()) {
+        setCommittedUsername(storedCommitted)
+        return storedCommitted
+      }
+    } catch {
+      // Ignore storage read failures.
+    }
+
     const linked = await submitLeaderboardScore({
       usernameOverride: username,
       showStatus: false,
       reason: 'clans-auth',
     })
 
-    if (!linked) {
-      return null
+    if (linked) {
+      return username
     }
 
-    return username
-  }, [committedUsername, leaderboardOwnerToken, resolveClanUsername, submitLeaderboardScore])
+    // Fallback: if the player profile exists, allow clan requests to proceed and let
+    // server-side auth give the precise ownership error when relevant.
+    try {
+      const profile = await fetchPlayerProfile(username)
+      if (profile?.player) {
+        setCommittedUsername(username)
+        try {
+          window.localStorage.setItem(LEADERBOARD_COMMITTED_USERNAME_KEY, username)
+        } catch {
+          // Ignore storage write failures.
+        }
+        return username
+      }
+    } catch {
+      // Ignore lookup failures and fall through to null.
+    }
+
+    return null
+  }, [committedUsername, fetchPlayerProfile, leaderboardOwnerToken, resolveClanUsername, submitLeaderboardScore])
 
   const syncCommittedUserProgress = useCallback(async (options = {}) => {
     const {
@@ -1248,7 +1275,7 @@ function App() {
   const createClan = useCallback(async () => {
     const username = await ensureClanIdentity()
     if (!username || !leaderboardOwnerToken) {
-      setClansStatus('Set your leaderboard username first to use clans.')
+      setClansStatus('Could not verify your leaderboard identity. Try refreshing leaderboard first.')
       return
     }
     if (!createClanIcon) {
@@ -1296,7 +1323,7 @@ function App() {
   const joinClan = useCallback(async (clanKey) => {
     const username = await ensureClanIdentity()
     if (!username || !leaderboardOwnerToken) {
-      setClansStatus('Set your leaderboard username first to use clans.')
+      setClansStatus('Could not verify your leaderboard identity. Try refreshing leaderboard first.')
       return
     }
 

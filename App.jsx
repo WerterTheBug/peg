@@ -129,7 +129,7 @@ const LEADERBOARD_LIMIT = 50
 const LEADERBOARD_REFRESH_MS = 10000
 const PROGRESS_SYNC_MS = 5000
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
-const ADMIN_USERNAME = 'REAL buy btf'
+const ADMIN_USERNAME = 'lawrence main'
 const SLOT_DISTRIBUTION_MODE_KEY = 'peg-slot-distribution-mode-v1'
 
 function generateOwnerToken() {
